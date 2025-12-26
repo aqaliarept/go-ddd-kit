@@ -1,0 +1,9 @@
+go 1.25.5
+
+use (
+	./internal/test
+	./pkg/core
+	./pkg/mongo
+	./pkg/postgres
+	./pkg/redis
+)

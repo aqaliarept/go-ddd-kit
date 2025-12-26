@@ -1,0 +1,21 @@
+version: "2"
+linters:
+  enable-all: true
+  settings:
+    exhauststruct:
+      allow-empty: true
+      # Allows empty structures in return statements.
+      # Default: false
+      allow-empty-returns: true
+      # Allows empty structures in variable declarations.
+      # Default: false
+      allow-empty-declarations: true
+    staticcheck:
+      checks:
+        - all
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      disable-default-exclusions: true
+    govet:
+      enable-all: true

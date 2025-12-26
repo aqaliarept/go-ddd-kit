@@ -1,0 +1,80 @@
+{
+	"name": "Go Fast DDD",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": ".."
+	},
+	"workspaceFolder": "/workspace",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+	// Resource limits for the container
+	// Adjust these values based on your system resources:
+	// - memory: RAM limit (e.g., "4g" = 4GB, "8g" = 8GB)
+	// - cpus: CPU cores (e.g., "2.0" = 2 cores, "4.0" = 4 cores, "0.5" = half a core)
+	// - shm-size: Shared memory size (important for some build tools and databases)
+	"runArgs": [
+		"--memory=16g",
+		"--cpus=2.0",
+		"--shm-size=2g",
+		"--privileged"
+	],
+	// Mount zsh configuration files from host
+	// Note: Comment out any mounts for files/directories that don't exist on your host
+	"mounts": [
+		"source=${localEnv:HOME}/.zshrc,target=/root/.zshrc,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.zshenv,target=/root/.zshenv,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.zprofile,target=/root/.zprofile,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.oh-my-zsh,target=/root/.oh-my-zsh,type=bind,consistency=cached",
+		// Go build cache - shares compiled packages between host and container
+		// macOS: ~/Library/Caches/go-build, Linux: ~/.cache/go-build
+		// If the directory doesn't exist, Go will create it on first use
+		"source=${localEnv:HOME}/Library/Caches/go-build,target=/root/.cache/go-build,type=bind,consistency=cached",
+		// Go module cache - shares downloaded modules between host and container
+		// Typically at ~/go/pkg/mod (or $GOPATH/pkg/mod)
+		// If the directory doesn't exist, create it: mkdir -p ~/go/pkg/mod
+		"source=${localEnv:HOME}/go/pkg/mod,target=/go/pkg/mod,type=bind,consistency=cached"
+	],
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {
+			"version": "latest",
+			"dockerDashComposeVersion": "v2"
+		}
+	},
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+	// Use 'postCreateCommand' to run commands after the container is created.
+	"postCreateCommand": "/usr/local/bin/setup-zsh.sh && source /root/.gvm/scripts/gvm 2>/dev/null || true && go version && go env",
+	// Environment variables for testcontainers and Go cache
+	"containerEnv": {
+		"TESTCONTAINERS_RYUK_DISABLED": "true",
+		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
+		"GOCACHE": "/root/.cache/go-build",
+		"GOMODCACHE": "/go/pkg/mod"
+	},
+	// Configure tool-specific properties.
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"ms-vscode.vscode-json"
+			],
+			"settings": {
+				"terminal.integrated.shellIntegration.enabled": false,
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"go.useLanguageServer": true,
+				"go.gopath": "/go",
+				"go.toolsManagement.checkForUpdates": "local",
+				"go.testTimeout": "120s",
+				"go.lintTool": "staticcheck",
+				"go.lintOnSave": "package",
+				"go.formatTool": "goimports",
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.organizeImports": "explicit"
+				}
+			}
+		}
+	},
+	// Comment out to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
+	"remoteUser": "root"
+}
