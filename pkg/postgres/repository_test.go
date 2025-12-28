@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/aqaliarept/go-ddd/core"
-	testpkg "github.com/aqaliarept/go-ddd/internal/test"
+	core "github.com/aqaliarept/go-ddd/pkg/core"
+	testpkg "github.com/aqaliarept/go-ddd/pkg/internal/test"
 	"github.com/avast/retry-go/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/testcontainers/testcontainers-go"

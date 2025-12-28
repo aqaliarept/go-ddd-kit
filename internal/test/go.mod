@@ -1,9 +1,9 @@
-module github.com/aqaliarept/go-ddd/internal/test
+module github.com/aqaliarept/go-ddd/pkg/internal/test
 
 go 1.25.5
 
 require (
-	github.com/aqaliarept/go-ddd/core v0.0.0
+	github.com/aqaliarept/go-ddd/pkg/core v0.0.0
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -16,4 +16,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/aqaliarept/go-ddd/core => ../../pkg/core
+replace github.com/aqaliarept/go-ddd/pkg/core => ../../pkg/core

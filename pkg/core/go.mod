@@ -1,4 +1,4 @@
-module github.com/aqaliarept/go-ddd/core
+module github.com/aqaliarept/go-ddd/pkg/core
 
 go 1.25.5
 

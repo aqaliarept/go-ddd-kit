@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	core "github.com/aqaliarept/go-ddd/core"
+	core "github.com/aqaliarept/go-ddd/pkg/core"
 	"github.com/stretchr/testify/require"
 )
 

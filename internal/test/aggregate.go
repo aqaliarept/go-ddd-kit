@@ -4,7 +4,7 @@ package test
 import (
 	"fmt"
 
-	core "github.com/aqaliarept/go-ddd/core"
+	core "github.com/aqaliarept/go-ddd/pkg/core"
 )
 
 // NestedEntity represents a nested entity in test state

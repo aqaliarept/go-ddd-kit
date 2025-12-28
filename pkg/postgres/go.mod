@@ -1,15 +1,15 @@
-module github.com/aqaliarept/go-ddd/postgres
+module github.com/aqaliarept/go-ddd/pkg/postgres
 
-replace github.com/aqaliarept/go-ddd/core => ../core
+replace github.com/aqaliarept/go-ddd/pkg/core => ../core
 
-replace github.com/aqaliarept/go-ddd/internal/test => ../../internal/test
+replace github.com/aqaliarept/go-ddd/pkg/internal/test => ../../internal/test
 
 go 1.25.5
 
 require (
 	github.com/avast/retry-go/v4 v4.7.0
-	github.com/aqaliarept/go-ddd/core v0.0.0
-	github.com/aqaliarept/go-ddd/internal/test v0.0.0-00010101000000-000000000000
+	github.com/aqaliarept/go-ddd/pkg/core v0.0.0
+	github.com/aqaliarept/go-ddd/pkg/internal/test v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgconn v1.14.3
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/testcontainers/testcontainers-go v0.40.0

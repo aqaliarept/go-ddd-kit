@@ -1,21 +1,21 @@
-module github.com/aqaliarept/go-ddd/mongo
+module github.com/aqaliarept/go-ddd/pkg/mongo
 
 go 1.25.5
 
 require (
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/google/uuid v1.6.0
-	github.com/aqaliarept/go-ddd/core v0.0.0
-	github.com/aqaliarept/go-ddd/internal/test v0.0.0
+	github.com/aqaliarept/go-ddd/pkg/core v0.0.0
+	github.com/aqaliarept/go-ddd/pkg/internal/test v0.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.40.0
 	go.mongodb.org/mongo-driver/v2 v2.4.0
 )
 
-replace github.com/aqaliarept/go-ddd/core => ../core
+replace github.com/aqaliarept/go-ddd/pkg/core => ../core
 
-replace github.com/aqaliarept/go-ddd/internal/test => ../../internal/test
+replace github.com/aqaliarept/go-ddd/pkg/internal/test => ../../internal/test
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
