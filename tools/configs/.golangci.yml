@@ -17,5 +17,7 @@ linters:
       check-type-assertions: true
       check-blank: true
       disable-default-exclusions: true
+      exclude-functions:
+        - fmt.Println
     govet:
       enable-all: true
