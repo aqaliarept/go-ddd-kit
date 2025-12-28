@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/aqaliarept/go-ddd/pkg/core"
+	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
 	"github.com/avast/retry-go/v4"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -336,8 +336,3 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		require.Equal(t, "initial-value", loadedAgg.State().String)
 	})
 }
-
-
-
-
-

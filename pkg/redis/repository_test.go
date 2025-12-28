@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/aqaliarept/go-ddd/pkg/core"
-	testpkg "github.com/aqaliarept/go-ddd/pkg/internal/test"
+	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
+	testpkg "github.com/aqaliarept/go-ddd-kit/pkg/internal/test"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"

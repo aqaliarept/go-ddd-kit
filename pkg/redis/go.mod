@@ -1,16 +1,16 @@
-module github.com/aqaliarept/go-ddd/pkg/redis
+module github.com/aqaliarept/go-ddd-kit/pkg/redis
 
 go 1.25.5
 
 require (
-	github.com/aqaliarept/go-ddd/pkg/core v0.0.0
+	github.com/aqaliarept/go-ddd-kit/pkg/core v0.0.0
 	github.com/redis/go-redis/v9 v9.17.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.40.0
 )
 
-replace github.com/aqaliarept/go-ddd/pkg/core => ../core
+replace github.com/aqaliarept/go-ddd-kit/pkg/core => ../core
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

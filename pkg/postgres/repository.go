@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	core "github.com/aqaliarept/go-ddd/pkg/core"
+	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"

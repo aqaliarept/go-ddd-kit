@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	core "github.com/aqaliarept/go-ddd/pkg/core"
+	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"

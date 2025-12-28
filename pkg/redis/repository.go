@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aqaliarept/go-ddd/pkg/core"
+	"github.com/aqaliarept/go-ddd-kit/pkg/core"
 	"github.com/redis/go-redis/v9"
 )
 
