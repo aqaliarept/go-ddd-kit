@@ -1,4 +1,4 @@
-.PHONY: test lint build
+.PHONY: test lint build test-mongo
 
 build:
 	go build work
@@ -9,7 +9,5 @@ test:
 lint:
 	tools/lint.sh
 
-ci: build lint test
-
-
-
+# Temporarily: run only mongo tests (excluding build and lint)
+ci: lint build test 

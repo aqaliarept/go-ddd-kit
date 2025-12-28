@@ -11,18 +11,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    container:
-      image: golangci/golangci-lint:v2.7.2
-
-    services:
-      docker:
-        image: docker:20.10.7
-        options: --privileged
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Run CI
-        run: make ci
+      - name: Run ci
+        run: chmod +x ./tools/run-ci-docker.sh && ./tools/run-ci-docker.sh

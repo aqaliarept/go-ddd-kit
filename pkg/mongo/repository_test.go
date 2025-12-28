@@ -94,7 +94,6 @@ func SetupMongoTestContainer(t *testing.T) *mongoTestContainer {
 	// Start MongoDB container
 	mongoContainer, err := mongodb.Run(ctx,
 		"mongo:7.0",
-		// mongodb.WithReplicaSet("rs0"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("Waiting for connections").
 				WithOccurrence(1).

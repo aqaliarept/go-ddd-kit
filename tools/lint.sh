@@ -1,7 +1,7 @@
 #!/bin/bash
 # Lint script that uses golangci-lint with config from tools/configs
 
-set -e
+set -euo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
