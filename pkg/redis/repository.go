@@ -25,7 +25,7 @@ type repository struct {
 }
 
 type AggregateDocument[T any] struct {
-	State   any    `json:"state"`
+	State   T      `json:"state"`
 	ID      string `json:"id"`
 	Version uint64 `json:"version"`
 }
@@ -50,23 +50,17 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 		return fmt.Errorf("retrieval failed: %w", err)
 	}
 
-	var doc AggregateDocument[any]
+	var doc AggregateDocument[[]byte]
 	if err := json.Unmarshal([]byte(rawData), &doc); err != nil {
 		return fmt.Errorf("deserialization failed: %w", err)
 	}
 
-	target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) {
-		serialized, err := json.Marshal(doc.State)
-		if err != nil {
-			panic(fmt.Sprintf("state serialization error: %v", err))
+	return target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) error {
+		if err := json.Unmarshal(doc.State, statePtr); err != nil {
+			return fmt.Errorf("state deserialization error: %w", err)
 		}
-
-		if err := json.Unmarshal(serialized, statePtr); err != nil {
-			panic(fmt.Sprintf("state deserialization error: %v", err))
-		}
+		return nil
 	})
-
-	return nil
 }
 
 type ttlConfig struct {
@@ -111,15 +105,12 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 			return fmt.Errorf("state encoding failed: %w", err)
 		}
 
-		var statePayload any
-		if err = json.Unmarshal(stateBytes, &statePayload); err != nil {
-			return fmt.Errorf("state parsing failed: %w", err)
-		}
+		nextVersion := currentVersion.Next()
 
-		doc := AggregateDocument[any]{
+		doc := AggregateDocument[[]byte]{
 			ID:      string(identifier),
-			Version: uint64(currentVersion + 1),
-			State:   statePayload,
+			Version: uint64(nextVersion),
+			State:   stateBytes,
 		}
 
 		docBytes, err := json.Marshal(doc)
@@ -176,7 +167,7 @@ func (r *repository) executeWithVersionCheck(ctx context.Context, key string, ex
 			return fmt.Errorf("version check failed: %w", err)
 		}
 
-		var doc AggregateDocument[any]
+		var doc AggregateDocument[[]byte]
 		if err = json.Unmarshal([]byte(rawData), &doc); err != nil {
 			return fmt.Errorf("document parsing failed: %w", err)
 		}

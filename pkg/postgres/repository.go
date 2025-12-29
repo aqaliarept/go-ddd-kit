@@ -120,14 +120,13 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 	}
 
 	// Restore the aggregate state
-	target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) {
+	return target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) error {
 		// Unmarshal JSON state directly into state pointer
 		if err := json.Unmarshal(doc.State, statePtr); err != nil {
-			panic(fmt.Sprintf("state deserialization error: %v", err))
+			return fmt.Errorf("state deserialization error: %w", err)
 		}
+		return nil
 	})
-
-	return nil
 }
 
 // Save implements Repository.
@@ -154,7 +153,7 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 			return fmt.Errorf("state encoding failed: %w", err)
 		}
 
-		nextVersion := currentVersion + 1
+		nextVersion := currentVersion.Next()
 
 		if currentVersion == 0 {
 			return r.insertNew(ctx, tableName, identifier, stateBytes, nextVersion)

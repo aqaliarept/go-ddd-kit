@@ -45,7 +45,7 @@ type Storer interface {
 }
 
 type Restorer interface {
-	Restore(id ID, version Version, restoreFunc func(state StatePtr))
+	Restore(id ID, version Version, restoreFunc func(state StatePtr) error) error
 }
 
 type raiser[T State] struct {
@@ -161,12 +161,15 @@ func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version) er
 	return nil
 }
 
-func (a *Aggregate[TState]) Restore(id ID, version Version, restoreFunc func(state StatePtr)) {
+func (a *Aggregate[TState]) Restore(id ID, version Version, restoreFunc func(state StatePtr) error) error {
 	a.id = id
 	a.version = version
-	restoreFunc(&a.state)
+	if err := restoreFunc(&a.state); err != nil {
+		return err
+	}
 	a.events = nil
 	a.err = nil
+	return nil
 }
 
 func (a *Aggregate[TState]) Error() error {

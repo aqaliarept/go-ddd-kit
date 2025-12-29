@@ -118,7 +118,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 	if !ok {
 		panic("target must implement CollectionStore")
 	}
-	var doc AggregateDocument[any]
+	var doc AggregateDocument[bson.RawValue]
 	err := r.db.Collection(getCollectionName(entity)).FindOne(operationCtx, bson.M{"_id": string(id)}).Decode(&doc)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -128,19 +128,12 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 	}
 
 	// Restore the aggregate state
-	target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) {
-		// The state is already a BSON document, so we can unmarshal it directly
-		stateBytes, err := bson.Marshal(doc.State)
-		if err != nil {
-			panic(fmt.Sprintf("state serialization error: %v", err))
+	return target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) error {
+		if err := doc.State.Unmarshal(statePtr); err != nil {
+			return fmt.Errorf("state deserialization error: %w", err)
 		}
-
-		if err := bson.Unmarshal(stateBytes, statePtr); err != nil {
-			panic(fmt.Sprintf("state deserialization error: %v", err))
-		}
+		return nil
 	})
-
-	return nil
 }
 
 // Save implements Repository.

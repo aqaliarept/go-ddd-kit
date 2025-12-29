@@ -227,14 +227,16 @@ func TestAggregate(t *testing.T) {
 		agg := testAgg{}
 		id := ID("id")
 		state := testAggState{MyString: "created", MySlice: make([]nestedEntity, 0)}
-		agg.Restore(id, Version(100), func(state StatePtr) {
+		err := agg.Restore(id, Version(100), func(state StatePtr) error {
 			s, ok := state.(*testAggState)
 			if !ok {
 				t.Fatalf("invalid state type")
 			}
 			s.MyString = "created"
 			s.MySlice = make([]nestedEntity, 0)
+			return nil
 		})
+		require.NoError(t, err)
 		require.Equal(t, state, agg.State())
 		require.Empty(t, agg.events)
 		require.Equal(t, Version(100), agg.version)
@@ -251,14 +253,16 @@ func TestAggregate(t *testing.T) {
 		agg := newTestAgg("id2")
 		agg.err = errors.New("error")
 		state := testAggState{MyString: "created", MySlice: make([]nestedEntity, 0)}
-		agg.Restore(id, Version(100), func(state StatePtr) {
+		err := agg.Restore(id, Version(100), func(state StatePtr) error {
 			s, ok := state.(*testAggState)
 			if !ok {
 				t.Fatalf("invalid state type")
 			}
 			s.MyString = "created"
 			s.MySlice = make([]nestedEntity, 0)
+			return nil
 		})
+		require.NoError(t, err)
 		require.Equal(t, id, agg.ID())
 		require.Equal(t, state, agg.State())
 		require.Empty(t, agg.events)
@@ -269,12 +273,13 @@ func TestAggregate(t *testing.T) {
 
 //go:noinline
 func Restore(r Restorer) {
-	r.Restore("id", 100, func(state StatePtr) {
+	r.Restore("id", 100, func(state StatePtr) error {
 		s, ok := state.(*testAggState)
 		if !ok {
 			panic("invalid state type")
 		}
 		s.MyString = "created"
+		return nil
 	})
 }
 
