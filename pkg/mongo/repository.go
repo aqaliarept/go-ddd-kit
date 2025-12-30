@@ -97,9 +97,10 @@ func (r *repository) Rollback(ctx context.Context) error {
 }
 
 type AggregateDocument[T any] struct {
-	State   T      `bson:"state"`
-	ID      string `bson:"_id"`
-	Version uint64 `bson:"version"`
+	State         T      `bson:"state"`
+	ID            string `bson:"_id"`
+	Version       uint64 `bson:"version"`
+	SchemaVersion uint64 `bson:"schema"`
 }
 
 func getCollectionName(entity CollectionStore) string {
@@ -127,8 +128,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 		return fmt.Errorf("retrieval failed: %w", err)
 	}
 
-	// Restore the aggregate state
-	return target.Restore(id, core.Version(doc.Version), core.DefaultSchemaVersion, func(statePtr core.StatePtr) error {
+	return target.Restore(id, core.Version(doc.Version), core.SchemaVersion(doc.SchemaVersion), func(statePtr core.StatePtr) error {
 		if err := doc.State.Unmarshal(statePtr); err != nil {
 			return fmt.Errorf("state deserialization error: %w", err)
 		}
@@ -172,9 +172,10 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 		}
 
 		doc := AggregateDocument[any]{
-			ID:      string(identifier),
-			Version: uint64(currentVersion + 1),
-			State:   statePayload,
+			ID:            string(identifier),
+			Version:       uint64(currentVersion + 1),
+			State:         statePayload,
+			SchemaVersion: uint64(schemaVersion),
 		}
 
 		if currentVersion == 0 {

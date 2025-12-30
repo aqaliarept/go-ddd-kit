@@ -23,9 +23,9 @@ type (
 	Repository = core.Repository
 )
 
-// testAgg wraps testpkg.TestAgg and implements CollectionStore for MongoDB
+// testAgg wraps testpkg.TestAggWrapper and implements CollectionStore for MongoDB
 type testAgg struct {
-	testpkg.TestAgg
+	testpkg.TestAggWrapper
 }
 
 func (t *testAgg) CollectionName() CollectionName {
@@ -34,21 +34,23 @@ func (t *testAgg) CollectionName() CollectionName {
 
 func newTestAgg(id core.ID) *testAgg {
 	baseAgg := testpkg.NewTestAgg(id)
-	return &testAgg{TestAgg: baseAgg}
+	wrapper := testpkg.NewTestAggWrapper(baseAgg)
+	return &testAgg{TestAggWrapper: *wrapper}
 }
 
-// mongoTestAgg embeds the base TestAgg and implements CollectionStore for MongoDB
+func newTestAggForLoad() *testAgg {
+	baseAgg := testpkg.NewTestAgg("")
+	wrapper := testpkg.NewTestAggWrapper(baseAgg)
+	return &testAgg{TestAggWrapper: *wrapper}
+}
+
+// mongoTestAgg wraps TestAggWrapper and adds CollectionName method for MongoDB
 type mongoTestAgg struct {
-	testpkg.TestAgg
+	testpkg.TestAggWrapper
 }
 
 func (m *mongoTestAgg) CollectionName() CollectionName {
 	return "test_agg"
-}
-
-func newMongoTestAgg(id core.ID) *mongoTestAgg {
-	baseAgg := testpkg.NewTestAgg(id)
-	return &mongoTestAgg{TestAgg: baseAgg}
 }
 
 // mongoTestContainer wraps a MongoDB testcontainer
@@ -163,8 +165,9 @@ func (m *mongoTestRunner) SetupContext(t *testing.T) context.Context {
 	return context.Background()
 }
 
-func (m *mongoTestRunner) NewAggregate(id core.ID) testpkg.TestAggregate {
-	return newMongoTestAgg(id)
+func (m *mongoTestRunner) NewAggregate(agg any) testpkg.TestAggregate {
+	wrapper := testpkg.NewTestAggWrapper(agg)
+	return &mongoTestAgg{TestAggWrapper: *wrapper}
 }
 
 func (m *mongoTestRunner) SetupConcurrentScope(t *testing.T) *core.ConcurrentScope {

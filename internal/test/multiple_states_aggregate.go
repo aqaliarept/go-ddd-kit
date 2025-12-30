@@ -8,8 +8,7 @@ import (
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
 )
 
-/// StateV1
-
+// StateV1 represents version 1 of the test state for schema migration testing
 type StateV1 struct {
 	ValueV1 string
 	value   string
@@ -27,6 +26,7 @@ func (s *StateV1) Apply(event core.Event) {
 }
 
 // Restore implements StateRestorer interface
+// The private 'value' field is used to test internal state transformations during restoration
 func (s *StateV1) Restore(schemaVersion core.SchemaVersion, restoreFunc func(state core.StatePtr) error) error {
 	switch schemaVersion {
 	case core.DefaultSchemaVersion:
@@ -48,13 +48,15 @@ func (t *StateTestAggV1) SingleEventCommand(val string) (core.EventPack, error) 
 	})
 }
 
-/// StateV2
-
+// StateV2SchemaVersion is the schema version constant for StateV2
 const StateV2SchemaVersion = core.SchemaVersion(2)
+
+// StateV2 represents version 2 of the test state for schema migration testing
 
 var _ core.StateRestorer = (*StateV2)(nil)
 var _ core.StateStorer = (*StateV2)(nil)
 
+// StateV2 represents version 2 of the test state for schema migration testing
 type StateV2 struct {
 	ValueV2 string
 	value   string
@@ -78,6 +80,8 @@ func (t *StateTestAggV2) SingleEventCommand(val string) (core.EventPack, error) 
 	})
 }
 
+// Restore implements StateRestorer interface
+// The private 'value' field is used to test internal state transformations during restoration
 func (s *StateV2) Restore(schemaVersion core.SchemaVersion, restoreFunc func(state core.StatePtr) error) error {
 	switch schemaVersion {
 	case core.DefaultSchemaVersion:
@@ -85,6 +89,9 @@ func (s *StateV2) Restore(schemaVersion core.SchemaVersion, restoreFunc func(sta
 		err := restoreFunc(stateV1)
 		if err != nil {
 			return err
+		}
+		if stateV1.ValueV1 == "" {
+			return fmt.Errorf("migrated state from V1 has empty ValueV1")
 		}
 		s.ValueV2 = stateV1.ValueV1
 	case StateV2SchemaVersion:
@@ -104,7 +111,7 @@ func (s *StateV2) Store(storeFunc func(state core.StatePtr, schemaVersion core.S
 	return storeFunc(s, StateV2SchemaVersion)
 }
 
-// AggV2
+// StateTestAggV1 is a test aggregate using StateV1 schema version
 type StateTestAggV1 struct {
 	core.Aggregate[StateV1]
 }
@@ -115,7 +122,7 @@ func NewStateTestAggV1(id core.ID) *StateTestAggV1 {
 	return agg
 }
 
-// AggV2
+// StateTestAggV2 is a test aggregate using StateV2 schema version
 type StateTestAggV2 struct {
 	core.Aggregate[StateV2]
 }

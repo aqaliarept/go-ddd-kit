@@ -29,18 +29,13 @@ const (
 	DefaultRetryMaxJitter = 50 * time.Millisecond
 )
 
-// postgresTestAgg embeds the base TestAgg and implements TableStore for PostgreSQL
+// postgresTestAgg wraps TestAggWrapper and adds TableName method for PostgreSQL
 type postgresTestAgg struct {
-	testpkg.TestAgg
+	testpkg.TestAggWrapper
 }
 
 func (p *postgresTestAgg) TableName() TableName {
 	return "test_agg"
-}
-
-func newPostgresTestAgg(id core.ID) *postgresTestAgg {
-	baseAgg := testpkg.NewTestAgg(id)
-	return &postgresTestAgg{TestAgg: baseAgg}
 }
 
 // postgresTestContainer wraps a PostgreSQL testcontainer
@@ -150,6 +145,7 @@ func createTestTable(ctx context.Context, db *pgxpool.Pool) error {
 			id VARCHAR(255) PRIMARY KEY,
 			version BIGINT NOT NULL,
 			data JSONB NOT NULL,
+			schema_version BIGINT,
 			CONSTRAINT test_agg_id_unique UNIQUE (id)
 		)
 	`
@@ -171,8 +167,9 @@ func (p *postgresTestRunner) SetupContext(t *testing.T) context.Context {
 	return context.Background()
 }
 
-func (p *postgresTestRunner) NewAggregate(id core.ID) testpkg.TestAggregate {
-	return newPostgresTestAgg(id)
+func (p *postgresTestRunner) NewAggregate(agg any) testpkg.TestAggregate {
+	wrapper := testpkg.NewTestAggWrapper(agg)
+	return &postgresTestAgg{TestAggWrapper: *wrapper}
 }
 
 func (p *postgresTestRunner) SetupConcurrentScope(t *testing.T) *core.ConcurrentScope {

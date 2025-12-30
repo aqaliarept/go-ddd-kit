@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/avast/retry-go/v4"
 )
@@ -19,7 +20,7 @@ type (
 	SchemaVersion uint64
 )
 
-const DefaultSchemaVersion = SchemaVersion(1)
+const DefaultSchemaVersion = SchemaVersion(0)
 
 type Storer interface {
 	Store(storeFunc func(id ID, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error) error
@@ -53,14 +54,19 @@ type Transactional interface {
 }
 
 type ConcurrentScope struct {
-	Factory   RepositoryFactory
-	retryOpts []retry.Option
+	Factory         RepositoryFactory
+	retryOpts       []retry.Option
+	rollbackTimeout time.Duration
 }
 
 func NewConcurrentScope(factory RepositoryFactory, defaultRetryOpts ...retry.Option) *ConcurrentScope {
 	retryIf := retry.RetryIf(func(err error) bool { return errors.Is(err, ErrTransient) || errors.Is(err, ErrConcurrentModification) })
 	opts := append([]retry.Option{retryIf}, defaultRetryOpts...)
-	return &ConcurrentScope{Factory: factory, retryOpts: opts}
+	return &ConcurrentScope{
+		Factory:         factory,
+		retryOpts:       opts,
+		rollbackTimeout: 10 * time.Second,
+	}
 }
 
 type RunOptions any
@@ -77,7 +83,7 @@ func (c *ConcurrentScope) Run(ctx context.Context, runFunc func(ctx context.Cont
 	retryOpts := c.retryOpts
 	for _, opt := range runOptions {
 		if opts, ok := opt.(retryOptions); ok {
-			retryOpts = append(c.retryOpts, opts.retryOptions...)
+			retryOpts = append(retryOpts, opts.retryOptions...)
 		}
 	}
 	return retry.Do(
@@ -91,7 +97,9 @@ func (c *ConcurrentScope) Run(ctx context.Context, runFunc func(ctx context.Cont
 				}
 				err = runFunc(ctx, repo)
 				if err != nil {
-					rollbackErr := transactional.Rollback(ctx)
+					rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.rollbackTimeout)
+					defer cancel()
+					rollbackErr := transactional.Rollback(rollbackCtx)
 					return errors.Join(err, rollbackErr)
 				}
 				return transactional.Commit(ctx)

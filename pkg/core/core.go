@@ -144,9 +144,17 @@ func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version, Sc
 	if len(a.events) == 0 {
 		return nil
 	}
-	err := storeFunc(a.id, &a.state, a.events, a.version, DefaultSchemaVersion)
-	if err != nil {
-		return err
+	stateStorer, ok := any(&a.state).(StateStorer)
+	if ok {
+		if err := stateStorer.Store(func(state StatePtr, schemaVersion SchemaVersion) error {
+			return storeFunc(a.id, state, a.events, a.version, schemaVersion)
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := storeFunc(a.id, &a.state, a.events, a.version, DefaultSchemaVersion); err != nil {
+			return err
+		}
 	}
 	a.events = nil
 	a.version++
@@ -156,8 +164,15 @@ func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version, Sc
 func (a *Aggregate[TState]) Restore(id ID, version Version, schemaVersion SchemaVersion, restoreFunc func(state StatePtr) error) error {
 	a.id = id
 	a.version = version
-	if err := restoreFunc(&a.state); err != nil {
-		return err
+	restorer, ok := any(&a.state).(StateRestorer)
+	if ok {
+		if err := restorer.Restore(schemaVersion, restoreFunc); err != nil {
+			return err
+		}
+	} else {
+		if err := restoreFunc(&a.state); err != nil {
+			return err
+		}
 	}
 	a.events = nil
 	a.err = nil

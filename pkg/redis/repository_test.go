@@ -15,18 +15,13 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// redisTestAgg embeds the base TestAgg and implements NamespacedEntity for Redis
+// redisTestAgg wraps TestAggWrapper and adds Namespace method for Redis
 type redisTestAgg struct {
-	testpkg.TestAgg
+	testpkg.TestAggWrapper
 }
 
 func (r *redisTestAgg) Namespace() Namespace {
 	return "test_agg"
-}
-
-func newRedisTestAgg(id core.ID) *redisTestAgg {
-	baseAgg := testpkg.NewTestAgg(id)
-	return &redisTestAgg{TestAgg: baseAgg}
 }
 
 // redisTestContainer wraps a Redis testcontainer
@@ -114,8 +109,9 @@ func (r *redisTestRunner) SetupContext(t *testing.T) context.Context {
 	return context.Background()
 }
 
-func (r *redisTestRunner) NewAggregate(id core.ID) testpkg.TestAggregate {
-	return newRedisTestAgg(id)
+func (r *redisTestRunner) NewAggregate(agg any) testpkg.TestAggregate {
+	wrapper := testpkg.NewTestAggWrapper(agg)
+	return &redisTestAgg{TestAggWrapper: *wrapper}
 }
 
 func TestRedisRepository(t *testing.T) {
@@ -138,17 +134,22 @@ func TestRedisRepository_Expiration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Save new aggregate with expiration", func(t *testing.T) {
-		agg := newRedisTestAgg("expire-test-id-1")
+		baseAgg := testpkg.NewTestAgg("expire-test-id-1")
+		wrapper := testpkg.NewTestAggWrapper(baseAgg)
+		agg := &redisTestAgg{TestAggWrapper: *wrapper}
 		_, err := agg.SingleEventCommand("expire-value")
 		require.NoError(t, err)
 
 		err = repo.Save(ctx, agg, WithExpiration(1*time.Second))
 		require.NoError(t, err)
 
-		loadedAgg := newRedisTestAgg("")
+		baseLoadedAgg := testpkg.NewTestAgg("")
+		loadedWrapper := testpkg.NewTestAggWrapper(baseLoadedAgg)
+		loadedAgg := &redisTestAgg{TestAggWrapper: *loadedWrapper}
 		err = repo.Load(ctx, "expire-test-id-1", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "expire-value", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "expire-value", state.String)
 
 		time.Sleep(1100 * time.Millisecond)
 
@@ -158,7 +159,9 @@ func TestRedisRepository_Expiration(t *testing.T) {
 	})
 
 	t.Run("Save existing aggregate with expiration", func(t *testing.T) {
-		agg := newRedisTestAgg("expire-test-id-2")
+		baseAgg := testpkg.NewTestAgg("expire-test-id-2")
+		wrapper := testpkg.NewTestAggWrapper(baseAgg)
+		agg := &redisTestAgg{TestAggWrapper: *wrapper}
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
@@ -169,10 +172,13 @@ func TestRedisRepository_Expiration(t *testing.T) {
 		err = repo.Save(ctx, agg, WithExpiration(1*time.Second))
 		require.NoError(t, err)
 
-		loadedAgg := newRedisTestAgg("")
+		baseLoadedAgg := testpkg.NewTestAgg("")
+		loadedWrapper := testpkg.NewTestAggWrapper(baseLoadedAgg)
+		loadedAgg := &redisTestAgg{TestAggWrapper: *loadedWrapper}
 		err = repo.Load(ctx, "expire-test-id-2", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "updated-value", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "updated-value", state.String)
 
 		time.Sleep(1100 * time.Millisecond)
 
@@ -182,7 +188,9 @@ func TestRedisRepository_Expiration(t *testing.T) {
 	})
 
 	t.Run("Save aggregate without expiration persists", func(t *testing.T) {
-		agg := newRedisTestAgg("no-expire-test-id")
+		baseAgg := testpkg.NewTestAgg("no-expire-test-id")
+		wrapper := testpkg.NewTestAggWrapper(baseAgg)
+		agg := &redisTestAgg{TestAggWrapper: *wrapper}
 		_, err := agg.SingleEventCommand("persistent-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
@@ -190,10 +198,13 @@ func TestRedisRepository_Expiration(t *testing.T) {
 
 		time.Sleep(500 * time.Millisecond)
 
-		loadedAgg := newRedisTestAgg("")
+		baseLoadedAgg := testpkg.NewTestAgg("")
+		loadedWrapper := testpkg.NewTestAggWrapper(baseLoadedAgg)
+		loadedAgg := &redisTestAgg{TestAggWrapper: *loadedWrapper}
 		err = repo.Load(ctx, "no-expire-test-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "persistent-value", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "persistent-value", state.String)
 	})
 
 	t.Run("WithExpiration panics on zero duration", func(t *testing.T) {
@@ -209,13 +220,17 @@ func TestRedisRepository_Expiration(t *testing.T) {
 	})
 
 	t.Run("Update expiration on existing aggregate", func(t *testing.T) {
-		agg := newRedisTestAgg("update-expire-test-id")
+		baseAgg := testpkg.NewTestAgg("update-expire-test-id")
+		wrapper := testpkg.NewTestAggWrapper(baseAgg)
+		agg := &redisTestAgg{TestAggWrapper: *wrapper}
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		loadedAgg := newRedisTestAgg("")
+		baseLoadedAgg := testpkg.NewTestAgg("")
+		loadedWrapper := testpkg.NewTestAggWrapper(baseLoadedAgg)
+		loadedAgg := &redisTestAgg{TestAggWrapper: *loadedWrapper}
 		err = repo.Load(ctx, "update-expire-test-id", loadedAgg)
 		require.NoError(t, err)
 
@@ -226,7 +241,8 @@ func TestRedisRepository_Expiration(t *testing.T) {
 
 		err = repo.Load(ctx, "update-expire-test-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "updated-with-expire", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "updated-with-expire", state.String)
 
 		time.Sleep(1100 * time.Millisecond)
 
@@ -236,7 +252,9 @@ func TestRedisRepository_Expiration(t *testing.T) {
 	})
 
 	t.Run("Second save prolongs existing expiration", func(t *testing.T) {
-		agg := newRedisTestAgg("prolong-expire-test-id")
+		baseAgg := testpkg.NewTestAgg("prolong-expire-test-id")
+		wrapper := testpkg.NewTestAggWrapper(baseAgg)
+		agg := &redisTestAgg{TestAggWrapper: *wrapper}
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 
@@ -245,10 +263,13 @@ func TestRedisRepository_Expiration(t *testing.T) {
 
 		time.Sleep(600 * time.Millisecond)
 
-		loadedAgg := newRedisTestAgg("")
+		baseLoadedAgg := testpkg.NewTestAgg("")
+		loadedWrapper := testpkg.NewTestAggWrapper(baseLoadedAgg)
+		loadedAgg := &redisTestAgg{TestAggWrapper: *loadedWrapper}
 		err = repo.Load(ctx, "prolong-expire-test-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "initial-value", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "initial-value", state.String)
 
 		_, err = agg.SingleEventCommand("updated-value")
 		require.NoError(t, err)
@@ -259,7 +280,8 @@ func TestRedisRepository_Expiration(t *testing.T) {
 
 		err = repo.Load(ctx, "prolong-expire-test-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "updated-value", loadedAgg.State().String)
+		updatedState := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "updated-value", updatedState.String)
 
 		time.Sleep(1500 * time.Millisecond)
 

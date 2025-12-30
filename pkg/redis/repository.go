@@ -25,9 +25,10 @@ type repository struct {
 }
 
 type AggregateDocument[T any] struct {
-	State   T      `json:"state"`
-	ID      string `json:"id"`
-	Version uint64 `json:"version"`
+	State         T      `json:"state"`
+	ID            string `json:"id"`
+	Version       uint64 `json:"version"`
+	SchemaVersion uint64 `json:"schema_version,omitempty"`
 }
 
 func buildStorageKey(ns Namespace, identifier core.ID) string {
@@ -55,7 +56,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 		return fmt.Errorf("deserialization failed: %w", err)
 	}
 
-	return target.Restore(id, core.Version(doc.Version), core.DefaultSchemaVersion, func(statePtr core.StatePtr) error {
+	return target.Restore(id, core.Version(doc.Version), core.SchemaVersion(doc.SchemaVersion), func(statePtr core.StatePtr) error {
 		if err := json.Unmarshal(doc.State, statePtr); err != nil {
 			return fmt.Errorf("state deserialization error: %w", err)
 		}
@@ -108,9 +109,10 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 		nextVersion := currentVersion.Next()
 
 		doc := AggregateDocument[[]byte]{
-			ID:      string(identifier),
-			Version: uint64(nextVersion),
-			State:   stateBytes,
+			ID:            string(identifier),
+			Version:       uint64(nextVersion),
+			State:         stateBytes,
+			SchemaVersion: uint64(schemaVersion),
 		}
 
 		docBytes, err := json.Marshal(doc)

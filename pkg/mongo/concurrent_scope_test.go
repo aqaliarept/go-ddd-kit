@@ -7,6 +7,7 @@ import (
 	"time"
 
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
+	testpkg "github.com/aqaliarept/go-ddd-kit/pkg/internal/test"
 	"github.com/avast/retry-go/v4"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -97,7 +98,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		tctx, err := tx0.Begin(ctx)
 		require.NoError(t, err)
 
-		agg0 := &testAgg{}
+		agg0 := newTestAggForLoad()
 		err = repo0.Load(tctx, id, agg0)
 		require.NoError(t, err)
 
@@ -114,7 +115,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		tctx, err = tx1.Begin(ctx)
 		require.NoError(t, err)
 
-		agg1 := &testAgg{}
+		agg1 := newTestAggForLoad()
 		err = repo0.Load(tctx, id, agg1)
 		require.NoError(t, err)
 
@@ -156,10 +157,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 				require.NoError(t, err)
 
 				// Verify aggregate is visible within concurrent scope
-				loadedAgg := &testAgg{}
+				loadedAgg := newTestAggForLoad()
 				err = repo.Load(ctx, "concurrent-scope-retry-success-id", loadedAgg)
 				require.NoError(t, err)
-				require.Equal(t, "concurrent-scope-retry-success-value", loadedAgg.State().String)
+				state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+				require.Equal(t, "concurrent-scope-retry-success-value", state.String)
 
 				attempts--
 				if attempts >= 0 {
@@ -173,10 +175,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 
 		// Verify aggregate is visible after transaction retry success
 		repo := factory.Create(ctx)
-		loadedAgg := &testAgg{}
+		loadedAgg := newTestAggForLoad()
 		err = repo.Load(ctx, "concurrent-scope-retry-success-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "concurrent-scope-retry-success-value", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.Equal(t, "concurrent-scope-retry-success-value", state.String)
 	})
 
 	t.Run("Save aggregate within concurrent scope - retry failure", func(t *testing.T) {
@@ -193,10 +196,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify aggregate is visible within concurrent scope
-			loadedAgg := &testAgg{}
+			loadedAgg := newTestAggForLoad()
 			err = repo.Load(ctx, "concurrent-scope-retry-id", loadedAgg)
 			require.NoError(t, err)
-			require.Equal(t, "concurrent-scope-retry-value", loadedAgg.State().String)
+			state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+			require.Equal(t, "concurrent-scope-retry-value", state.String)
 
 			// Return error to trigger retry
 			return core.ErrConcurrentModification
@@ -209,7 +213,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 
 		// Verify aggregate is NOT visible after transaction retry failure
 		repo := factory.Create(ctx)
-		loadedAgg := &testAgg{}
+		loadedAgg := newTestAggForLoad()
 		err = repo.Load(ctx, "concurrent-scope-retry-id", loadedAgg)
 		require.Error(t, err)
 		require.Equal(t, core.ErrAggregateNotFound, err)
@@ -229,10 +233,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 			require.NoError(t, err)
 
 			// Load and update the aggregate within concurrent scope
-			loadedAgg := &testAgg{}
+			loadedAgg := newTestAggForLoad()
 			err = repo.Load(ctx, "concurrent-scope-updates-id", loadedAgg)
 			require.NoError(t, err)
-			require.Equal(t, "initial-value", loadedAgg.State().String)
+			state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+			require.Equal(t, "initial-value", state.String)
 
 			// Add more events
 			_, err = loadedAgg.SingleEventCommand("updated-value")
@@ -245,10 +250,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify the final state within concurrent scope
-			finalAgg := &testAgg{}
+			finalAgg := newTestAggForLoad()
 			err = repo.Load(ctx, "concurrent-scope-updates-id", finalAgg)
 			require.NoError(t, err)
-			require.Equal(t, "final-value", finalAgg.State().String)
+			finalState := testpkg.GetState[testpkg.TestAggState](finalAgg)
+			require.Equal(t, "final-value", finalState.String)
 
 			return nil
 		})
@@ -256,10 +262,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 
 		// Verify the final state after transaction commit
 		repo := factory.Create(ctx)
-		finalAgg := &testAgg{}
+		finalAgg := newTestAggForLoad()
 		err = repo.Load(ctx, "concurrent-scope-updates-id", finalAgg)
 		require.NoError(t, err)
-		require.Equal(t, "final-value", finalAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](finalAgg)
+		require.Equal(t, "final-value", state.String)
 	})
 
 	t.Run("Concurrent scope with concurrent access simulation", func(t *testing.T) {
@@ -279,13 +286,13 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		err = concurrentScope.Run(ctx,
 			func(ctx context.Context, repo Repository) error {
 				// Load the aggregate within concurrent scope
-				txAgg := &testAgg{}
+				txAgg := newTestAggForLoad()
 				err = repo.Load(ctx, "concurrent-scope-concurrent-id", txAgg)
 				require.NoError(t, err)
 
 				// Simulate concurrent access by modifying outside concurrent scope
 				outsideRepo := factory.Create(ctx)
-				outsideAgg := &testAgg{}
+				outsideAgg := newTestAggForLoad()
 				err = outsideRepo.Load(ctx, "concurrent-scope-concurrent-id", outsideAgg)
 				require.NoError(t, err)
 
@@ -329,10 +336,11 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		}
 
 		// Verify the outside modification was not successful
-		loadedAgg := &testAgg{}
+		loadedAgg := newTestAggForLoad()
 		err = repo.Load(ctx, "concurrent-scope-concurrent-id", loadedAgg)
 		require.NoError(t, err)
-		require.NotEqual(t, "outside-value", loadedAgg.State().String)
-		require.Equal(t, "initial-value", loadedAgg.State().String)
+		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		require.NotEqual(t, "outside-value", state.String)
+		require.Equal(t, "initial-value", state.String)
 	})
 }

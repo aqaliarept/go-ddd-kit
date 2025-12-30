@@ -34,10 +34,10 @@ func (t *TestAggState) Apply(event core.Event) {
 	}
 }
 
-// Created event
+// Created is the initial event emitted when a test aggregate is first created
 type Created struct{}
 
-// ValueUpdated event
+// ValueUpdated is an event that updates the string value in the test aggregate state
 type ValueUpdated struct {
 	Value string
 }
@@ -56,22 +56,25 @@ func (t *TestAgg) SingleEventCommand(val string) (core.EventPack, error) {
 }
 
 // NewTestAgg creates a new test aggregate with the given ID
-func NewTestAgg(id core.ID) TestAgg {
-	agg := TestAgg{}
+func NewTestAgg(id core.ID) *TestAgg {
+	agg := &TestAgg{}
 	agg.Initialize(id, Created{})
 	return agg
 }
 
 // StateTestAggState represents the state for state-only test aggregate
+//nolint:govet
 type StateTestAggState struct {
 	Value    string
-	Number   int
-	IsActive bool
 	Tags     []string
 	Metadata map[string]string
+	Number   int
+	IsActive bool
 }
 
-// StateTestAgg is a test aggregate that implements StateRestorer and StateStorer interfaces
+// StateTestAgg is a test aggregate that implements StateRestorer and StateStorer interfaces.
+// This aggregate is available for testing custom state restoration and storage logic,
+// though it is not currently used in the main test suite.
 type StateTestAgg struct {
 	state StateTestAggState
 }

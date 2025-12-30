@@ -96,7 +96,7 @@ func TestAggregate(t *testing.T) {
 		require.True(t, agg.State().Removed)
 	})
 
-	t.Run(`Given aggreate with non-zero version
+	t.Run(`Given aggregate with non-zero version
 			And with non-empty state
 			And events are not empty
 			And error is not empty
@@ -120,7 +120,7 @@ func TestAggregate(t *testing.T) {
 		require.Nil(t, agg.Error())
 	})
 
-	t.Run(`Given a newly created aggreagate
+	t.Run(`Given a newly created aggregate
 		When the allowed command is called
 		Then event is produced
 		And state is updated`, func(t *testing.T) {
@@ -135,7 +135,7 @@ func TestAggregate(t *testing.T) {
 		require.Equal(t, val, agg.State().MyString)
 	})
 
-	t.Run(`Given a newly created aggreagate
+	t.Run(`Given a newly created aggregate
 		When command is called and guard statement fails
 		And the command hasn't produced events before the failure
 		Then the error is returned
@@ -147,7 +147,7 @@ func TestAggregate(t *testing.T) {
 		require.Nil(t, agg.Error())
 	})
 
-	t.Run(`Given a newly created aggreagate
+	t.Run(`Given a newly created aggregate
 		When command is called and guard statement fails
 		And the command has produced event before the failure
 		Then the error is returned
@@ -192,7 +192,7 @@ func TestAggregate(t *testing.T) {
 	t.Run(`Given an aggregate without events
 		When Store is called
 		Then persistFunc shouldn't be called
-		And aggregate version shouldn'be be changed
+		And aggregate version shouldn't be changed
 	`, func(t *testing.T) {
 		agg := testAgg{}
 		persistFuncCalled := false
@@ -208,7 +208,7 @@ func TestAggregate(t *testing.T) {
 	t.Run(`Given a newly created aggregate
 		When Store is called
 		And persistFunc returns an error
-		Then aggreate's state shouldn't be changed
+		Then aggregate's state shouldn't be changed
 	`, func(t *testing.T) {
 		agg := newTestAgg("id")
 		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
@@ -222,7 +222,7 @@ func TestAggregate(t *testing.T) {
 
 	t.Run(`Given an empty aggregate
 			When Restore is called
-			Then aggreate's state is restored from parmas of Restore
+			Then aggregate's state is restored from params of Restore
 		`, func(t *testing.T) {
 		agg := testAgg{}
 		id := ID("id")
@@ -245,7 +245,7 @@ func TestAggregate(t *testing.T) {
 	t.Run(`Given a newly created aggregate
 		And Error is not nil
 		When Restore is called
-		Then aggreate's state is restored from parmas of Restore
+		Then aggregate's state is restored from params of Restore
 		And Error is set to nil
 	
 		`, func(t *testing.T) {
@@ -273,14 +273,16 @@ func TestAggregate(t *testing.T) {
 
 //go:noinline
 func Restore(r Restorer) {
-	r.Restore("id", 100, DefaultSchemaVersion, func(state StatePtr) error {
+	if err := r.Restore("id", 100, DefaultSchemaVersion, func(state StatePtr) error {
 		s, ok := state.(*testAggState)
 		if !ok {
 			panic("invalid state type")
 		}
 		s.MyString = "created"
 		return nil
-	})
+	}); err != nil {
+		panic(err)
+	}
 }
 
 func BenchmarkAggregate(b *testing.B) {

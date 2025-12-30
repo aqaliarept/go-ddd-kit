@@ -82,9 +82,10 @@ func (r *repository) Rollback(ctx context.Context) error {
 }
 
 type AggregateDocument struct {
-	ID      string          `json:"id"`
-	State   json.RawMessage `json:"state"`
-	Version uint64          `json:"version"`
+	ID            string          `json:"id"`
+	State         json.RawMessage `json:"state"`
+	Version       uint64          `json:"version"`
+	SchemaVersion uint64          `json:"schema"`
 }
 
 func getTableName(entity TableStore) string {
@@ -99,17 +100,17 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 
 	tableName := getTableName(entity)
 	// Use FOR UPDATE when in a transaction to ensure proper locking
-	query := fmt.Sprintf(`SELECT id, version, data FROM %s WHERE id = $1`, tableName)
+	query := fmt.Sprintf(`SELECT id, version, data, COALESCE(schema_version, 1) FROM %s WHERE id = $1`, tableName)
 	if r.tx != nil {
-		query = fmt.Sprintf(`SELECT id, version, data FROM %s WHERE id = $1 FOR UPDATE`, tableName)
+		query = fmt.Sprintf(`SELECT id, version, data, COALESCE(schema_version, 1) FROM %s WHERE id = $1 FOR UPDATE`, tableName)
 	}
 
 	var doc AggregateDocument
 	var err error
 	if r.tx != nil {
-		err = r.tx.tx.QueryRow(ctx, query, string(id)).Scan(&doc.ID, &doc.Version, &doc.State)
+		err = r.tx.tx.QueryRow(ctx, query, string(id)).Scan(&doc.ID, &doc.Version, &doc.State, &doc.SchemaVersion)
 	} else {
-		err = r.db.QueryRow(ctx, query, string(id)).Scan(&doc.ID, &doc.Version, &doc.State)
+		err = r.db.QueryRow(ctx, query, string(id)).Scan(&doc.ID, &doc.Version, &doc.State, &doc.SchemaVersion)
 	}
 
 	if err != nil {
@@ -120,7 +121,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 	}
 
 	// Restore the aggregate state
-	return target.Restore(id, core.Version(doc.Version), core.DefaultSchemaVersion, func(statePtr core.StatePtr) error {
+	return target.Restore(id, core.Version(doc.Version), core.SchemaVersion(doc.SchemaVersion), func(statePtr core.StatePtr) error {
 		// Unmarshal JSON state directly into state pointer
 		if err := json.Unmarshal(doc.State, statePtr); err != nil {
 			return fmt.Errorf("state deserialization error: %w", err)
@@ -156,10 +157,10 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 		nextVersion := currentVersion.Next()
 
 		if currentVersion == 0 {
-			return r.insertNew(ctx, tableName, identifier, stateBytes, nextVersion)
+			return r.insertNew(ctx, tableName, identifier, stateBytes, nextVersion, schemaVersion)
 		}
 
-		return r.updateExisting(ctx, tableName, identifier, stateBytes, currentVersion, nextVersion)
+		return r.updateExisting(ctx, tableName, identifier, stateBytes, currentVersion, nextVersion, schemaVersion)
 	})
 }
 
@@ -203,13 +204,13 @@ func (r *repository) removeWithVersionCheck(ctx context.Context, tableName strin
 	return nil
 }
 
-func (r *repository) insertNew(ctx context.Context, tableName string, id core.ID, stateBytes []byte, version core.Version) error {
-	query := fmt.Sprintf(`INSERT INTO %s (id, version, data) VALUES ($1, $2, $3)`, tableName)
+func (r *repository) insertNew(ctx context.Context, tableName string, id core.ID, stateBytes []byte, version core.Version, schemaVersion core.SchemaVersion) error {
+	query := fmt.Sprintf(`INSERT INTO %s (id, version, data, schema_version) VALUES ($1, $2, $3, $4)`, tableName)
 	var err error
 	if r.tx != nil {
-		_, err = r.tx.tx.Exec(ctx, query, string(id), uint64(version), stateBytes)
+		_, err = r.tx.tx.Exec(ctx, query, string(id), uint64(version), stateBytes, uint64(schemaVersion))
 	} else {
-		_, err = r.db.Exec(ctx, query, string(id), uint64(version), stateBytes)
+		_, err = r.db.Exec(ctx, query, string(id), uint64(version), stateBytes, uint64(schemaVersion))
 	}
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -228,14 +229,14 @@ func (r *repository) insertNew(ctx context.Context, tableName string, id core.ID
 	return nil
 }
 
-func (r *repository) updateExisting(ctx context.Context, tableName string, id core.ID, stateBytes []byte, expectedVersion core.Version, nextVersion core.Version) error {
-	query := fmt.Sprintf(`UPDATE %s SET version = $1, data = $2 WHERE id = $3 AND version = $4`, tableName)
+func (r *repository) updateExisting(ctx context.Context, tableName string, id core.ID, stateBytes []byte, expectedVersion core.Version, nextVersion core.Version, schemaVersion core.SchemaVersion) error {
+	query := fmt.Sprintf(`UPDATE %s SET version = $1, data = $2, schema_version = $3 WHERE id = $4 AND version = $5`, tableName)
 	var tag pgconn.CommandTag
 	var err error
 	if r.tx != nil {
-		tag, err = r.tx.tx.Exec(ctx, query, uint64(nextVersion), stateBytes, string(id), uint64(expectedVersion))
+		tag, err = r.tx.tx.Exec(ctx, query, uint64(nextVersion), stateBytes, uint64(schemaVersion), string(id), uint64(expectedVersion))
 	} else {
-		tag, err = r.db.Exec(ctx, query, uint64(nextVersion), stateBytes, string(id), uint64(expectedVersion))
+		tag, err = r.db.Exec(ctx, query, uint64(nextVersion), stateBytes, uint64(schemaVersion), string(id), uint64(expectedVersion))
 	}
 	if err != nil {
 		var pgErr *pgconn.PgError
