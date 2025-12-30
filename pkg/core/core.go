@@ -40,14 +40,6 @@ type EventApplier interface {
 	Apply(event Event)
 }
 
-type Storer interface {
-	Store(storeFunc func(id ID, state StatePtr, events EventPack, version Version) error) error
-}
-
-type Restorer interface {
-	Restore(id ID, version Version, restoreFunc func(state StatePtr) error) error
-}
-
 type raiser[T State] struct {
 	a *Aggregate[T]
 }
@@ -147,12 +139,12 @@ func (a *Aggregate[T]) Remove() (EventPack, error) {
 	})
 }
 
-func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version) error) error {
+func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version, SchemaVersion) error) error {
 	a.checkError()
 	if len(a.events) == 0 {
 		return nil
 	}
-	err := storeFunc(a.id, &a.state, a.events, a.version)
+	err := storeFunc(a.id, &a.state, a.events, a.version, DefaultSchemaVersion)
 	if err != nil {
 		return err
 	}
@@ -161,7 +153,7 @@ func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version) er
 	return nil
 }
 
-func (a *Aggregate[TState]) Restore(id ID, version Version, restoreFunc func(state StatePtr) error) error {
+func (a *Aggregate[TState]) Restore(id ID, version Version, schemaVersion SchemaVersion, restoreFunc func(state StatePtr) error) error {
 	a.id = id
 	a.version = version
 	if err := restoreFunc(&a.state); err != nil {

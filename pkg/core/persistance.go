@@ -13,8 +13,29 @@ var ErrAggregateNotFound = errors.New("aggregate not found")
 var ErrTransient = errors.New("transient error")
 var ErrTransactionNotFound = errors.New("transaction not found")
 
-type LoadOption any
-type SaveOption any
+type (
+	LoadOption    any
+	SaveOption    any
+	SchemaVersion uint64
+)
+
+const DefaultSchemaVersion = SchemaVersion(1)
+
+type Storer interface {
+	Store(storeFunc func(id ID, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error) error
+}
+
+type Restorer interface {
+	Restore(id ID, version Version, schemaVersion SchemaVersion, restoreFunc func(state StatePtr) error) error
+}
+
+type StateRestorer interface {
+	Restore(schemaVersion SchemaVersion, restoreFunc func(state StatePtr) error) error
+}
+
+type StateStorer interface {
+	Store(storeFunc func(state StatePtr, schemaVersion SchemaVersion) error) error
+}
 
 type Repository interface {
 	Load(ctx context.Context, id ID, aggregate Restorer, options ...LoadOption) error

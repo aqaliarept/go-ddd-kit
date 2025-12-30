@@ -2,8 +2,6 @@
 package test
 
 import (
-	"fmt"
-
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
 )
 
@@ -32,7 +30,7 @@ func (t *TestAggState) Apply(event core.Event) {
 	case core.Tombstone:
 		t.Removed = true
 	default:
-		panic(fmt.Sprintf("unsupported event %T", event))
+		core.PanicUnsupportedEvent(event)
 	}
 }
 
@@ -62,4 +60,54 @@ func NewTestAgg(id core.ID) TestAgg {
 	agg := TestAgg{}
 	agg.Initialize(id, Created{})
 	return agg
+}
+
+// StateTestAggState represents the state for state-only test aggregate
+type StateTestAggState struct {
+	Value    string
+	Number   int
+	IsActive bool
+	Tags     []string
+	Metadata map[string]string
+}
+
+// StateTestAgg is a test aggregate that implements StateRestorer and StateStorer interfaces
+type StateTestAgg struct {
+	state StateTestAggState
+}
+
+var _ core.StateRestorer = (*StateTestAgg)(nil)
+var _ core.StateStorer = (*StateTestAgg)(nil)
+
+// Restore implements StateRestorer interface
+func (s *StateTestAgg) Restore(schemaVersion core.SchemaVersion, restoreFunc func(state core.StatePtr) error) error {
+	return restoreFunc(&s.state)
+}
+
+// Store implements StateStorer interface
+func (s *StateTestAgg) Store(storeFunc func(state core.StatePtr, schemaVersion core.SchemaVersion) error) error {
+	return storeFunc(&s.state, core.DefaultSchemaVersion)
+}
+
+// State returns the current state
+func (s *StateTestAgg) State() StateTestAggState {
+	return s.state
+}
+
+// SetState sets the state directly (for testing purposes)
+func (s *StateTestAgg) SetState(state StateTestAggState) {
+	s.state = state
+}
+
+// NewStateTestAgg creates a new state test aggregate with default values
+func NewStateTestAgg() *StateTestAgg {
+	return &StateTestAgg{
+		state: StateTestAggState{
+			Value:    "default",
+			Number:   0,
+			IsActive: false,
+			Tags:     make([]string, 0),
+			Metadata: make(map[string]string),
+		},
+	}
 }

@@ -55,7 +55,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 		return fmt.Errorf("deserialization failed: %w", err)
 	}
 
-	return target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) error {
+	return target.Restore(id, core.Version(doc.Version), core.DefaultSchemaVersion, func(statePtr core.StatePtr) error {
 		if err := json.Unmarshal(doc.State, statePtr); err != nil {
 			return fmt.Errorf("state deserialization error: %w", err)
 		}
@@ -83,7 +83,7 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 		}
 	}
 
-	return source.Store(func(identifier core.ID, statePtr core.StatePtr, events core.EventPack, currentVersion core.Version) error {
+	return source.Store(func(identifier core.ID, statePtr core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
 		entity, ok := source.(NamespacedEntity)
 		if !ok {
 			panic("source must implement NamespacedEntity")

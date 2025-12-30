@@ -170,7 +170,7 @@ func TestAggregate(t *testing.T) {
 		var pState *testAggState
 		var pEventPack EventPack
 		var pVersion Version
-		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version) error {
+		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 			var ok bool
 			pState, ok = as.(*testAggState)
 			if !ok {
@@ -196,7 +196,7 @@ func TestAggregate(t *testing.T) {
 	`, func(t *testing.T) {
 		agg := testAgg{}
 		persistFuncCalled := false
-		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version) error {
+		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 			persistFuncCalled = true
 			return nil
 		})
@@ -211,7 +211,7 @@ func TestAggregate(t *testing.T) {
 		Then aggreate's state shouldn't be changed
 	`, func(t *testing.T) {
 		agg := newTestAgg("id")
-		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version) error {
+		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 			return errors.New("error")
 		})
 		require.Error(t, err)
@@ -227,7 +227,7 @@ func TestAggregate(t *testing.T) {
 		agg := testAgg{}
 		id := ID("id")
 		state := testAggState{MyString: "created", MySlice: make([]nestedEntity, 0)}
-		err := agg.Restore(id, Version(100), func(state StatePtr) error {
+		err := agg.Restore(id, Version(100), DefaultSchemaVersion, func(state StatePtr) error {
 			s, ok := state.(*testAggState)
 			if !ok {
 				t.Fatalf("invalid state type")
@@ -253,7 +253,7 @@ func TestAggregate(t *testing.T) {
 		agg := newTestAgg("id2")
 		agg.err = errors.New("error")
 		state := testAggState{MyString: "created", MySlice: make([]nestedEntity, 0)}
-		err := agg.Restore(id, Version(100), func(state StatePtr) error {
+		err := agg.Restore(id, Version(100), DefaultSchemaVersion, func(state StatePtr) error {
 			s, ok := state.(*testAggState)
 			if !ok {
 				t.Fatalf("invalid state type")
@@ -273,7 +273,7 @@ func TestAggregate(t *testing.T) {
 
 //go:noinline
 func Restore(r Restorer) {
-	r.Restore("id", 100, func(state StatePtr) error {
+	r.Restore("id", 100, DefaultSchemaVersion, func(state StatePtr) error {
 		s, ok := state.(*testAggState)
 		if !ok {
 			panic("invalid state type")
@@ -310,7 +310,7 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ReportAllocs()
 		agg := newTestAgg("id")
 		for i := 0; i < b.N; i++ {
-			err := agg.Store(func(i ID, sp StatePtr, ep EventPack, v Version) error {
+			err := agg.Store(func(i ID, sp StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 				_, ok := sp.(*testAggState)
 				if !ok {
 					return fmt.Errorf("invalid state type")

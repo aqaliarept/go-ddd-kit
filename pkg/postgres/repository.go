@@ -120,7 +120,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 	}
 
 	// Restore the aggregate state
-	return target.Restore(id, core.Version(doc.Version), func(statePtr core.StatePtr) error {
+	return target.Restore(id, core.Version(doc.Version), core.DefaultSchemaVersion, func(statePtr core.StatePtr) error {
 		// Unmarshal JSON state directly into state pointer
 		if err := json.Unmarshal(doc.State, statePtr); err != nil {
 			return fmt.Errorf("state deserialization error: %w", err)
@@ -131,7 +131,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 
 // Save implements Repository.
 func (r *repository) Save(ctx context.Context, source core.Storer, options ...core.SaveOption) error {
-	return source.Store(func(identifier core.ID, statePtr core.StatePtr, events core.EventPack, currentVersion core.Version) error {
+	return source.Store(func(identifier core.ID, statePtr core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
 		entity, ok := source.(TableStore)
 		if !ok {
 			panic("source must implement TableStore")
