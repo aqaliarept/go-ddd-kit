@@ -132,7 +132,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 
 // Save implements Repository.
 func (r *repository) Save(ctx context.Context, source core.Storer, options ...core.SaveOption) error {
-	return source.Store(func(identifier core.ID, statePtr core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
+	return source.Store(func(identifier core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
 		entity, ok := source.(TableStore)
 		if !ok {
 			panic("source must implement TableStore")
@@ -149,7 +149,7 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 			return r.removeWithVersionCheck(ctx, tableName, identifier, currentVersion)
 		}
 
-		stateBytes, err := json.Marshal(statePtr)
+		stateBytes, err := json.Marshal(storageState)
 		if err != nil {
 			return fmt.Errorf("state encoding failed: %w", err)
 		}

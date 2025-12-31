@@ -84,7 +84,7 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 		}
 	}
 
-	return source.Store(func(identifier core.ID, statePtr core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
+	return source.Store(func(identifier core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
 		entity, ok := source.(NamespacedEntity)
 		if !ok {
 			panic("source must implement NamespacedEntity")
@@ -101,7 +101,7 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 			return r.removeWithVersionCheck(ctx, storageKey, currentVersion)
 		}
 
-		stateBytes, err := json.Marshal(statePtr)
+		stateBytes, err := json.Marshal(storageState)
 		if err != nil {
 			return fmt.Errorf("state encoding failed: %w", err)
 		}

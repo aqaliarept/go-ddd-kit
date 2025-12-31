@@ -170,9 +170,9 @@ func TestAggregate(t *testing.T) {
 		var pState *testAggState
 		var pEventPack EventPack
 		var pVersion Version
-		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
+		err := agg.Store(func(id ID, aggregate AggregatePtr, storageState StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 			var ok bool
-			pState, ok = as.(*testAggState)
+			pState, ok = storageState.(*testAggState)
 			if !ok {
 				return fmt.Errorf("invalid state type")
 			}
@@ -196,7 +196,7 @@ func TestAggregate(t *testing.T) {
 	`, func(t *testing.T) {
 		agg := testAgg{}
 		persistFuncCalled := false
-		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
+		err := agg.Store(func(id ID, aggregate AggregatePtr, storageState StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 			persistFuncCalled = true
 			return nil
 		})
@@ -211,7 +211,7 @@ func TestAggregate(t *testing.T) {
 		Then aggregate's state shouldn't be changed
 	`, func(t *testing.T) {
 		agg := newTestAgg("id")
-		err := agg.Store(func(id ID, as StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
+		err := agg.Store(func(id ID, aggregate AggregatePtr, storageState StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 			return errors.New("error")
 		})
 		require.Error(t, err)
@@ -312,8 +312,8 @@ func BenchmarkAggregate(b *testing.B) {
 		b.ReportAllocs()
 		agg := newTestAgg("id")
 		for i := 0; i < b.N; i++ {
-			err := agg.Store(func(i ID, sp StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
-				_, ok := sp.(*testAggState)
+			err := agg.Store(func(i ID, aggregate AggregatePtr, storageState StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
+				_, ok := storageState.(*testAggState)
 				if !ok {
 					return fmt.Errorf("invalid state type")
 				}

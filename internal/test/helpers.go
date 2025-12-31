@@ -41,9 +41,9 @@ func (ta *TestAggWrapper) Restore(id core.ID, version core.Version, schemaVersio
 	}
 }
 
-func (ta *TestAggWrapper) Store(storeFunc func(id core.ID, state core.StatePtr, events core.EventPack, version core.Version, schemaVersion core.SchemaVersion) error) error {
+func (ta *TestAggWrapper) Store(storeFunc func(id core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, version core.Version, schemaVersion core.SchemaVersion) error) error {
 	if cmd, ok := ta.t.(interface {
-		Store(func(core.ID, core.StatePtr, core.EventPack, core.Version, core.SchemaVersion) error) error
+		Store(func(core.ID, core.AggregatePtr, core.StatePtr, core.EventPack, core.Version, core.SchemaVersion) error) error
 	}); !ok {
 		panic("aggregate must implement Store")
 	} else {

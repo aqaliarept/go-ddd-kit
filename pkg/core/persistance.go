@@ -21,9 +21,10 @@ type (
 )
 
 const DefaultSchemaVersion = SchemaVersion(0)
+const defaultRollbackTimeout = 5 * time.Second
 
 type Storer interface {
-	Store(storeFunc func(id ID, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error) error
+	Store(storeFunc func(id ID, aggregate AggregatePtr, storageState StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error) error
 }
 
 type Restorer interface {
@@ -54,18 +55,27 @@ type Transactional interface {
 }
 
 type ConcurrentScope struct {
-	Factory         RepositoryFactory
+	factory         RepositoryFactory
 	retryOpts       []retry.Option
 	rollbackTimeout time.Duration
 }
 
-func NewConcurrentScope(factory RepositoryFactory, defaultRetryOpts ...retry.Option) *ConcurrentScope {
+func NewConcurrentScope(factory RepositoryFactory, runOptions ...RunOptions) *ConcurrentScope {
 	retryIf := retry.RetryIf(func(err error) bool { return errors.Is(err, ErrTransient) || errors.Is(err, ErrConcurrentModification) })
-	opts := append([]retry.Option{retryIf}, defaultRetryOpts...)
+	retryOpts := []retry.Option{retryIf}
+	rollbackTimeout := defaultRollbackTimeout
+	for _, opt := range runOptions {
+		if opts, ok := opt.(retryOptions); ok {
+			retryOpts = append(retryOpts, opts.retryOptions...)
+		}
+		if opts, ok := opt.(rollbackTimeoutOption); ok {
+			rollbackTimeout = opts.rollbackTimeout
+		}
+	}
 	return &ConcurrentScope{
-		Factory:         factory,
-		retryOpts:       opts,
-		rollbackTimeout: 10 * time.Second,
+		factory:         factory,
+		retryOpts:       retryOpts,
+		rollbackTimeout: rollbackTimeout,
 	}
 }
 
@@ -75,8 +85,41 @@ type retryOptions struct {
 	retryOptions []retry.Option
 }
 
+type rollbackTimeoutOption struct {
+	rollbackTimeout time.Duration
+}
+
+func WithRollbackTimeout(timeout time.Duration) RunOptions {
+	return rollbackTimeoutOption{rollbackTimeout: timeout}
+}
+
 func WithRetryOptions(opts ...retry.Option) RunOptions {
 	return retryOptions{retryOptions: opts}
+}
+
+type repoDecorator struct {
+	inner   Repository
+	changes map[AggregatePtr][]EventPack
+}
+
+var _ Repository = (*repoDecorator)(nil)
+
+func (c *repoDecorator) Load(ctx context.Context, id ID, aggregate Restorer, options ...LoadOption) error {
+	return c.inner.Load(ctx, id, aggregate, options...)
+}
+
+func (c *repoDecorator) Save(ctx context.Context, aggregate Storer, options ...SaveOption) error {
+	return c.inner.Save(ctx, aggregate, options...)
+}
+
+type storerDecorator struct {
+	inner Storer
+}
+
+var _ Storer = (*storerDecorator)(nil)
+
+func (c *storerDecorator) Store(storeFunc func(id ID, aggregate AggregatePtr, storageState StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error) error {
+	return c.inner.Store(storeFunc)
 }
 
 func (c *ConcurrentScope) Run(ctx context.Context, runFunc func(ctx context.Context, repo Repository) error, runOptions ...RunOptions) error {
@@ -88,7 +131,7 @@ func (c *ConcurrentScope) Run(ctx context.Context, runFunc func(ctx context.Cont
 	}
 	return retry.Do(
 		func() error {
-			repo := c.Factory.Create(ctx)
+			repo := c.factory.Create(ctx)
 			if transactional, ok := repo.(Transactional); ok {
 				var err error
 				ctx, err = transactional.Begin(ctx)

@@ -42,7 +42,7 @@ func NewMongoConcurrentScope(factory core.RepositoryFactory, config ConcurrentSc
 		retry.MaxJitter(config.Retry.MaxJitter),
 	}
 	return &MongoConcurrentScope{
-		ConcurrentScope: core.NewConcurrentScope(factory, retryOpts...),
+		ConcurrentScope: core.NewConcurrentScope(factory, core.WithRetryOptions(retryOpts...)),
 	}
 }
 
@@ -68,8 +68,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		id := core.ID(uuid.NewString())
 
 		func() {
-			cs := NewMongoConcurrentScope(factory, config)
-			repo := cs.Factory.Create(ctx)
+			repo := factory.Create(ctx)
 
 			tx, ok := repo.(core.Transactional)
 			require.True(t, ok)
@@ -89,8 +88,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		}()
 
 		// Transaction 0.
-		cs0 := NewMongoConcurrentScope(factory, config)
-		repo0 := cs0.Factory.Create(ctx)
+		repo0 := factory.Create(ctx)
 
 		tx0, ok := repo0.(core.Transactional)
 		require.True(t, ok)
@@ -106,8 +104,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		require.NoError(t, err)
 
 		// Transaction 1.
-		cs1 := NewMongoConcurrentScope(factory, config)
-		repo1 := cs1.Factory.Create(ctx)
+		repo1 := factory.Create(ctx)
 
 		tx1, ok := repo1.(core.Transactional)
 		require.True(t, ok)

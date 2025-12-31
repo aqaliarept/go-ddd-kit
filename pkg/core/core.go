@@ -14,12 +14,13 @@ var (
 )
 
 type (
-	State     any
-	StatePtr  any
-	Event     any
-	EventPack []Event
-	ID        string
-	Version   uint64
+	State        any
+	StatePtr     any
+	AggregatePtr any
+	Event        any
+	EventPack    []Event
+	ID           string
+	Version      uint64
 )
 
 func (v Version) Next() Version {
@@ -139,20 +140,21 @@ func (a *Aggregate[T]) Remove() (EventPack, error) {
 	})
 }
 
-func (a *Aggregate[T]) Store(storeFunc func(ID, StatePtr, EventPack, Version, SchemaVersion) error) error {
+func (a *Aggregate[T]) Store(storeFunc func(ID, AggregatePtr, StatePtr, EventPack, Version, SchemaVersion) error) error {
 	a.checkError()
 	if len(a.events) == 0 {
 		return nil
 	}
+	aggregatePtr := AggregatePtr(a)
 	stateStorer, ok := any(&a.state).(StateStorer)
 	if ok {
 		if err := stateStorer.Store(func(state StatePtr, schemaVersion SchemaVersion) error {
-			return storeFunc(a.id, state, a.events, a.version, schemaVersion)
+			return storeFunc(a.id, aggregatePtr, state, a.events, a.version, schemaVersion)
 		}); err != nil {
 			return err
 		}
 	} else {
-		if err := storeFunc(a.id, &a.state, a.events, a.version, DefaultSchemaVersion); err != nil {
+		if err := storeFunc(a.id, aggregatePtr, &a.state, a.events, a.version, DefaultSchemaVersion); err != nil {
 			return err
 		}
 	}
