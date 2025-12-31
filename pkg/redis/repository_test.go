@@ -89,6 +89,16 @@ func SetupRedisTestContainer(t *testing.T) *redisTestContainer {
 		t.Fatalf("failed to ping Redis: %v", errors.Join(err, closeErr, termErr))
 	}
 
+	// Register cleanup
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Logf("failed to close Redis client: %v", err)
+		}
+		if err := redisContainer.Terminate(ctx); err != nil {
+			t.Logf("failed to terminate Redis container: %v", err)
+		}
+	})
+
 	return &redisTestContainer{
 		container: redisContainer,
 		client:    client,
@@ -116,7 +126,6 @@ func (r *redisTestRunner) NewAggregate(agg any) testpkg.TestAggregate {
 
 func TestRedisRepository(t *testing.T) {
 	container := SetupRedisTestContainer(t)
-	defer container.Cleanup()
 
 	runner := &redisTestRunner{
 		container: container,
@@ -128,7 +137,6 @@ func TestRedisRepository(t *testing.T) {
 
 func TestRedisRepository_Expiration(t *testing.T) {
 	container := SetupRedisTestContainer(t)
-	defer container.Cleanup()
 
 	repo := newRepository(container.Client())
 	ctx := context.Background()

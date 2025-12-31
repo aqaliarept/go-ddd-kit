@@ -185,7 +185,6 @@ func (m *mongoTestRunner) SetupRepositoryFactory(t *testing.T) core.RepositoryFa
 
 func TestMongoRepository(t *testing.T) {
 	container := SetupMongoTestContainer(t)
-	defer container.Cleanup()
 
 	runner := &mongoTestRunner{
 		container: container,

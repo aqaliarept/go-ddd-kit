@@ -187,7 +187,6 @@ func (p *postgresTestRunner) SetupRepositoryFactory(t *testing.T) core.Repositor
 
 func TestPostgresRepository(t *testing.T) {
 	container := SetupPostgresTestContainer(t)
-	defer container.Cleanup()
 
 	runner := &postgresTestRunner{
 		container: container,

@@ -34,16 +34,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	ctx := runner.SetupContext(t)
 
 	t.Run(`Scenario: Save and Load aggregate with single event
-  Given a new aggregate with ID "test-id-1"
-  When I execute a single event command with value "test-value"
-  And I save the aggregate to the repository
-  Then the aggregate version should be 1
+  Given a new aggregate
+  When a single event command is executed
+  And the aggregate is saved to the repository
+  Then the aggregate version should be correct
   And the aggregate should have no pending events
-  And the aggregate state should reflect the event value
-  When I load the aggregate from the repository
+  And the aggregate state should reflect the event
+  When the aggregate is loaded from the repository
   Then the loaded aggregate should have the correct ID
-  And the loaded aggregate should have version 1
+  And the loaded aggregate should have the correct version
   And the loaded aggregate state should match the saved state`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("test-id-1")
 		agg := runner.NewAggregate(baseAgg)
 		pack, err := agg.SingleEventCommand("test-value")
@@ -72,15 +73,15 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Save aggregate with multiple events
-  Given a new aggregate with ID "test-id-2"
-  When I execute a first event command with value "first-value"
-  And I execute a second event command with value "second-value"
-  And I save the aggregate to the repository
-  Then the aggregate version should be 1
+  Given a new aggregate
+  When multiple event commands are executed
+  And the aggregate is saved to the repository
+  Then the aggregate version should be correct
   And the aggregate should have no pending events
-  And the aggregate state should reflect the last event value
-  When I load the aggregate from the repository
+  And the aggregate state should reflect the last event
+  When the aggregate is loaded from the repository
   Then the loaded aggregate state should match the final state`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("test-id-2")
 		agg := runner.NewAggregate(baseAgg)
 		pack1, err := agg.SingleEventCommand("first-value")
@@ -111,13 +112,14 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Save and Load aggregate preserves complex state
-  Given a new aggregate with ID "test-id-3"
-  When I execute an event command with value "complex-value"
-  And I save the aggregate to the repository
-  When I load the aggregate from the repository
+  Given a new aggregate
+  When an event command is executed
+  And the aggregate is saved to the repository
+  When the aggregate is loaded from the repository
   Then the loaded aggregate state should preserve complex nested structures
   And the entity slice should be initialized
   And the map structure should be preserved if present`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("test-id-3")
 		agg := runner.NewAggregate(baseAgg)
 		_, err := agg.SingleEventCommand("complex-value")
@@ -140,10 +142,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Save duplicate aggregate returns ErrAggregateExists
-  Given an aggregate with ID "test-id-duplicate" that has been saved
-  When I try to save another aggregate with the same ID
+  Given an aggregate that has been saved
+  When an attempt is made to save another aggregate with the same ID
   Then the save operation should fail
   And the error should be ErrAggregateExists`, func(t *testing.T) {
+		t.Parallel()
 		// Create and save first aggregate
 		baseAgg1 := NewTestAgg("test-id-duplicate")
 		agg1 := runner.NewAggregate(baseAgg1)
@@ -162,10 +165,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Load non-existent aggregate
-  Given an aggregate ID "non-existent-id" that does not exist in the repository
-  When I try to load the aggregate
+  Given an aggregate ID that does not exist in the repository
+  When an attempt is made to load the aggregate
   Then the load operation should fail
   And the error should be ErrAggregateNotFound`, func(t *testing.T) {
+		t.Parallel()
 		baseLoadedAgg := &TestAgg{}
 		loadedAgg := runner.NewAggregate(baseLoadedAgg)
 		err := repo.Load(ctx, "non-existent-id", loadedAgg)
@@ -174,12 +178,13 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Save aggregate without events
-  Given a new aggregate with ID "test-id-4" that has no pending events
-  When I save the aggregate to the repository
+  Given a new aggregate that has no pending events
+  When the aggregate is saved to the repository
   Then the save operation should succeed
-  And the aggregate version should be 1 (from the Created event)
-  When I load the aggregate from the repository
-  Then the loaded aggregate should have version 1`, func(t *testing.T) {
+  And the aggregate version should be correct
+  When the aggregate is loaded from the repository
+  Then the loaded aggregate should have the correct version`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("test-id-4")
 		agg := runner.NewAggregate(baseAgg)
 		err := repo.Save(ctx, agg)
@@ -195,13 +200,14 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Update existing aggregate
-  Given an aggregate with ID "test-id-5" that has been saved with version 1
-  When I execute another event command
-  And I save the aggregate again
-  Then the aggregate version should increment to 2
-  When I load the aggregate from the repository
-  Then the loaded aggregate should have version 2
+  Given an aggregate that has been saved
+  When another event command is executed
+  And the aggregate is saved again
+  Then the aggregate version should increment
+  When the aggregate is loaded from the repository
+  Then the loaded aggregate should have the incremented version
   And the loaded aggregate state should reflect the latest event`, func(t *testing.T) {
+		t.Parallel()
 		// Create and save initial aggregate
 		baseAgg := NewTestAgg("test-id-5")
 		agg := runner.NewAggregate(baseAgg)
@@ -231,14 +237,15 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Save new aggregate with tombstone event
-  Given a new aggregate with ID "test-id-6"
-  When I remove the aggregate (generates tombstone event)
-  And I save the aggregate to the repository
+  Given a new aggregate
+  When the aggregate is removed
+  And the aggregate is saved to the repository
   Then the save operation should succeed
-  When I try to load the aggregate from the repository
+  When an attempt is made to load the aggregate from the repository
   Then the load operation should fail
   And the error should be ErrAggregateNotFound
   And the document should not have been created`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("test-id-6")
 		agg := runner.NewAggregate(baseAgg)
 		pack, err := agg.Remove()
@@ -259,14 +266,15 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Save existing aggregate with tombstone event
-  Given an aggregate with ID "test-id-7" that has been saved with version 1
-  When I remove the aggregate (generates tombstone event)
-  And I save the aggregate to the repository
+  Given an aggregate that has been saved
+  When the aggregate is removed
+  And the aggregate is saved to the repository
   Then the save operation should succeed
-  When I try to load the aggregate from the repository
+  When an attempt is made to load the aggregate from the repository
   Then the load operation should fail
   And the error should be ErrAggregateNotFound
   And the document should have been deleted`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("test-id-7")
 		agg := runner.NewAggregate(baseAgg)
 		_, err := agg.SingleEventCommand("initial-value")
@@ -293,12 +301,13 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Atomic concurrency control - ErrConcurrentModification
-  Given an aggregate with ID "concurrency-test-id" that has been saved with version 1
-  And a second instance of the same aggregate loaded at version 1
-  When I modify and save the first aggregate (version becomes 2)
-  And I try to save the second aggregate with stale version 1
+  Given an aggregate that has been saved
+  And a second instance of the same aggregate loaded
+  When the first aggregate is modified and saved
+  And an attempt is made to save the second aggregate with stale version
   Then the save operation should fail
   And the error should be ErrConcurrentModification`, func(t *testing.T) {
+		t.Parallel()
 		// Create and save an aggregate
 		baseAgg := NewTestAgg("concurrency-test-id")
 		agg := runner.NewAggregate(baseAgg)
@@ -332,12 +341,13 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Atomic concurrency control - version conflict on stale aggregate
-  Given an aggregate with ID "successful-concurrency-test-id" that has been saved with version 1
-  And two instances of the same aggregate loaded at version 1
-  When I modify and save the second aggregate first (version becomes 2)
-  And I try to save the first aggregate with stale version 1
+  Given an aggregate that has been saved
+  And two instances of the same aggregate loaded
+  When the second aggregate is modified and saved first
+  And an attempt is made to save the first aggregate with stale version
   Then the save operation should fail
   And the error should be ErrConcurrentModification`, func(t *testing.T) {
+		t.Parallel()
 		// Create and save an aggregate
 		baseAgg := NewTestAgg("successful-concurrency-test-id")
 		agg := runner.NewAggregate(baseAgg)
@@ -371,15 +381,16 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Concurrent modification wins over removal
-  Given an aggregate with ID "concurrent-modify-remove-1" that has been saved
+  Given an aggregate that has been saved
   And two instances of the same aggregate loaded concurrently
-  When I modify and save the first instance
-  And I try to remove and save the second instance
+  When the first instance is modified and saved
+  And an attempt is made to remove and save the second instance
   Then the removal save operation should fail
   And the error should be ErrConcurrentModification
-  When I load the aggregate from the repository
+  When the aggregate is loaded from the repository
   Then the aggregate should exist with the modified state
   And the aggregate should not be removed`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("concurrent-modify-remove-1")
 		agg := runner.NewAggregate(baseAgg)
 		_, err := agg.SingleEventCommand("initial-value")
@@ -418,16 +429,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Concurrent removal wins over modification
-  Given an aggregate with ID "concurrent-modify-remove-2" that has been saved
+  Given an aggregate that has been saved
   And two instances of the same aggregate loaded concurrently
-  When I remove and save the first instance
-  And I try to modify and save the second instance
+  When the first instance is removed and saved
+  And an attempt is made to modify and save the second instance
   Then the modification save operation should fail
   And the error should be ErrAggregateNotFound
-  When I try to load the aggregate from the repository
+  When an attempt is made to load the aggregate from the repository
   Then the load operation should fail
   And the error should be ErrAggregateNotFound
   And the aggregate should have been deleted`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("concurrent-modify-remove-2")
 		agg := runner.NewAggregate(baseAgg)
 		_, err := agg.SingleEventCommand("initial-value")
@@ -464,16 +476,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: Concurrent removals - first wins
-  Given an aggregate with ID "concurrent-remove-remove-1" that has been saved
+  Given an aggregate that has been saved
   And two instances of the same aggregate loaded concurrently
-  When I remove and save the first instance
-  And I try to remove and save the second instance
+  When the first instance is removed and saved
+  And an attempt is made to remove and save the second instance
   Then the second removal save operation should fail
   And the error should be ErrAggregateNotFound
-  When I try to load the aggregate from the repository
+  When an attempt is made to load the aggregate from the repository
   Then the load operation should fail
   And the error should be ErrAggregateNotFound
   And the aggregate should have been deleted by the first removal`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewTestAgg("concurrent-remove-remove-1")
 		agg := runner.NewAggregate(baseAgg)
 		_, err := agg.SingleEventCommand("initial-value")
@@ -513,11 +526,12 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: V1 aggregate lifecycle - create, save, load
-	  Given a new V1 aggregate with ID "migration-v1-1"
-	  When I save the aggregate to the repository
-	  And I load the aggregate from the repository
-	  Then the loaded aggregate should have ValueV1 = "version 1"
-	  And the aggregate version should be 1`, func(t *testing.T) {
+	  Given a new V1 aggregate
+	  When the aggregate is saved to the repository
+	  And the aggregate is loaded from the repository
+	  Then the loaded aggregate should have correct V1 state
+	  And the aggregate version should be correct`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewStateTestAggV1("migration-v1-1")
 		agg := runner.NewAggregate(baseAgg)
 		err := repo.Save(ctx, agg)
@@ -536,9 +550,10 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 	t.Run(`Scenario: V1 aggregate - save again without changes
 	  Given a V1 aggregate that has been saved and loaded
-	  When I save the aggregate again without changes
-	  And I load the aggregate from the repository
+	  When the aggregate is saved again without changes
+	  And the aggregate is loaded from the repository
 	  Then the aggregate state should persist correctly`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewStateTestAggV1("migration-v1-2")
 		agg := runner.NewAggregate(baseAgg)
 		err := repo.Save(ctx, agg)
@@ -564,11 +579,12 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: V2 aggregate lifecycle - create, save, load
-	  Given a new V2 aggregate with ID "migration-v2-1"
-	  When I save the aggregate to the repository
-	  And I load the aggregate from the repository
-	  Then the loaded aggregate should have ValueV2 = "version 2"
-	  And the aggregate version should be 1`, func(t *testing.T) {
+	  Given a new V2 aggregate
+	  When the aggregate is saved to the repository
+	  And the aggregate is loaded from the repository
+	  Then the loaded aggregate should have correct V2 state
+	  And the aggregate version should be correct`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewStateTestAggV2("migration-v2-1")
 		agg := runner.NewAggregate(baseAgg)
 		err := repo.Save(ctx, agg)
@@ -587,11 +603,12 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 	t.Run(`Scenario: V2 aggregate - update, save, load
 	  Given a V2 aggregate that has been saved
-	  When I update the aggregate value
-	  And I save the aggregate to the repository
-	  And I load the aggregate from the repository
+	  When the aggregate value is updated
+	  And the aggregate is saved to the repository
+	  And the aggregate is loaded from the repository
 	  Then the loaded aggregate should have the updated value
-	  And the aggregate version should be 2`, func(t *testing.T) {
+	  And the aggregate version should be incremented`, func(t *testing.T) {
+		t.Parallel()
 		baseAgg := NewStateTestAggV2("migration-v2-2")
 		agg := runner.NewAggregate(baseAgg)
 		err := repo.Save(ctx, agg)
@@ -613,10 +630,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: V1 to V2 migration - load V1 state as V2
-	  Given a V1 aggregate that has been saved with schema version 1
-	  When I load the aggregate as V2
-	  Then the V2 aggregate should have ValueV2 = ValueV1 from V1
+	  Given a V1 aggregate that has been saved
+	  When the aggregate is loaded as V2
+	  Then the V2 aggregate should have migrated state from V1
 	  And the migration should succeed`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV1 := NewStateTestAggV1("migration-forward-1")
 		aggV1 := runner.NewAggregate(baseAggV1)
 		err := repo.Save(ctx, aggV1)
@@ -634,11 +652,12 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 	t.Run(`Scenario: V1 to V2 migration then update
 	  Given a V1 aggregate that has been saved
-	  When I load it as V2 and update the value
-	  And I save the V2 aggregate
-	  And I load the V2 aggregate again
+	  When it is loaded as V2 and the value is updated
+	  And the V2 aggregate is saved
+	  And the V2 aggregate is loaded again
 	  Then the updated value should be persisted
-	  And the aggregate version should be 2`, func(t *testing.T) {
+	  And the aggregate version should be incremented`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV1 := NewStateTestAggV1("migration-forward-2")
 		aggV1 := runner.NewAggregate(baseAggV1)
 		err := repo.Save(ctx, aggV1)
@@ -668,10 +687,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 	t.Run(`Scenario: V1 to V2 migration, update, save, load
 	  Given a V1 aggregate that has been saved
-	  When I load it as V2, update, and save (schema upgraded to 2)
-	  And I load the V2 aggregate again
+	  When it is loaded as V2, updated, and saved
+	  And the V2 aggregate is loaded again
 	  Then the state should be persisted with schema version 2
 	  And the value should be correct`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV1 := NewStateTestAggV1("migration-forward-3")
 		aggV1 := runner.NewAggregate(baseAggV1)
 		err := repo.Save(ctx, aggV1)
@@ -697,10 +717,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: V2 to V1 backward compatibility - V1 cannot load schema version 2
-	  Given a V2 aggregate that has been saved with schema version 2
-	  When I try to load it as V1
+	  Given a V2 aggregate that has been saved
+	  When an attempt is made to load it as V1
 	  Then the load operation should fail
 	  And the error should indicate unsupported schema version`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV2 := NewStateTestAggV2("migration-backward-1")
 		aggV2 := runner.NewAggregate(baseAggV2)
 		err := repo.Save(ctx, aggV2)
@@ -714,10 +735,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: V2 to V1 backward compatibility - updated V2 cannot be loaded as V1
-	  Given a V2 aggregate that has been updated and saved with schema version 2
-	  When I try to load it as V1
+	  Given a V2 aggregate that has been updated and saved
+	  When an attempt is made to load it as V1
 	  Then the load operation should fail
 	  And the error should indicate unsupported schema version`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV2 := NewStateTestAggV2("migration-backward-2")
 		aggV2 := runner.NewAggregate(baseAggV2)
 		err := repo.Save(ctx, aggV2)
@@ -736,11 +758,12 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	})
 
 	t.Run(`Scenario: V1 can load schema 1 even after V2 has read it
-	  Given a V1 aggregate that has been saved with schema version 1
-	  When I load it as V2 (migration read)
-	  And I try to load the same ID as V1
+	  Given a V1 aggregate that has been saved
+	  When it is loaded as V2
+	  And an attempt is made to load the same ID as V1
 	  Then V1 should still be able to load the aggregate
 	  And the state should be correct`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV1 := NewStateTestAggV1("migration-mixed-1")
 		aggV1 := runner.NewAggregate(baseAggV1)
 		err := repo.Save(ctx, aggV1)
@@ -764,10 +787,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 	t.Run(`Scenario: V1 cannot load after schema upgrade to version 2
 	  Given a V1 aggregate that has been saved
-	  When I load it as V2, update, and save (schema upgraded to 2)
-	  And I try to load it as V1
+	  When it is loaded as V2, updated, and saved
+	  And an attempt is made to load it as V1
 	  Then the load operation should fail
 	  And the error should indicate unsupported schema version`, func(t *testing.T) {
+		t.Parallel()
 		baseAggV1 := NewStateTestAggV1("migration-mixed-2")
 		aggV1 := runner.NewAggregate(baseAggV1)
 		err := repo.Save(ctx, aggV1)
@@ -799,12 +823,13 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 
 	t.Run(`Scenario: Save and Load aggregate within concurrent scope - successful commit
   Given a concurrent scope
-  When I create and save an aggregate within the concurrent scope
-  And I load the aggregate within the concurrent scope
+  When an aggregate is created and saved within the concurrent scope
+  And the aggregate is loaded within the concurrent scope
   Then the aggregate should be visible within the concurrent scope
   When the transaction commits successfully
   Then the aggregate should be visible after transaction commit
   And the aggregate state should match the saved state`, func(t *testing.T) {
+		t.Parallel()
 		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseAgg := NewTestAgg("tx-scope-success-id")
 			agg := runner.NewAggregate(baseAgg)
@@ -834,15 +859,16 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 
 	t.Run(`Scenario: Save aggregate within concurrent scope - rollback on error
   Given a concurrent scope
-  When I create and save an aggregate within the concurrent scope
-  And I verify the aggregate is visible within the concurrent scope
-  And I return an error to trigger rollback
+  When an aggregate is created and saved within the concurrent scope
+  And the aggregate is verified to be visible within the concurrent scope
+  And an error is returned to trigger rollback
   Then the transaction should rollback
   And the error should be returned
-  When I try to load the aggregate after rollback
+  When an attempt is made to load the aggregate after rollback
   Then the load operation should fail
   And the error should be ErrAggregateNotFound
   And the aggregate should not have been persisted`, func(t *testing.T) {
+		t.Parallel()
 		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseAgg := NewTestAgg("tx-scope-rollback-id")
 			agg := runner.NewAggregate(baseAgg)
@@ -873,12 +899,13 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 
 	t.Run(`Scenario: Multiple aggregates in single concurrent scope
   Given a concurrent scope
-  When I create and save multiple aggregates within the concurrent scope
-  And I verify all aggregates are visible within the concurrent scope
+  When multiple aggregates are created and saved within the concurrent scope
+  And all aggregates are verified to be visible within the concurrent scope
   Then the transaction should commit successfully
-  When I load all aggregates after transaction commit
+  When all aggregates are loaded after transaction commit
   Then all aggregates should be visible
   And all aggregate states should match the saved states`, func(t *testing.T) {
+		t.Parallel()
 		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			for i := 0; i < 3; i++ {
 				baseAgg := NewTestAgg(core.ID(fmt.Sprintf("tx-scope-multi-id-%d", i)))
@@ -914,15 +941,16 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 
 	t.Run(`Scenario: Concurrent scope with read-only operations
   Given an aggregate that has been saved outside concurrent scope
-  When I execute a read-only transaction using concurrent scope
-  And I load the aggregate within the concurrent scope
+  When a read-only transaction is executed using concurrent scope
+  And the aggregate is loaded within the concurrent scope
   Then the aggregate should be visible within the concurrent scope
   And the aggregate state should match the saved state
-  When I try to load a non-existent aggregate within the concurrent scope
+  When an attempt is made to load a non-existent aggregate within the concurrent scope
   Then the load operation should fail
   And the error should be ErrAggregateNotFound
   When the transaction commits
   Then the original aggregate should be unchanged`, func(t *testing.T) {
+		t.Parallel()
 		repo := factory.Create(ctx)
 		baseAgg := NewTestAgg("tx-scope-readonly-id")
 		agg := runner.NewAggregate(baseAgg)
@@ -958,14 +986,15 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 
 	t.Run(`Scenario: Concurrent scope with error handling and cleanup
   Given a concurrent scope
-  When I create and save multiple aggregates within the concurrent scope
-  And I simulate a failure during the transaction
+  When multiple aggregates are created and saved within the concurrent scope
+  And a failure is simulated during the transaction
   Then the transaction should rollback
   And the error should be returned
-  When I try to load all aggregates after rollback
+  When attempts are made to load all aggregates after rollback
   Then all load operations should fail
   And all errors should be ErrAggregateNotFound
   And no aggregates should have been persisted`, func(t *testing.T) {
+		t.Parallel()
 		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseAgg1 := NewTestAgg("tx-scope-cleanup-1")
 			agg1 := runner.NewAggregate(baseAgg1)
