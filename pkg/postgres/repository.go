@@ -18,8 +18,15 @@ var _ core.Transactional = (*repository)(nil)
 
 type TableName string
 
-type TableStore interface {
-	TableName() TableName
+type tableNameEntity struct {
+	tableName TableName
+}
+
+func WithTableName(tableName TableName) core.StorageOption {
+	if tableName == "" {
+		panic("table name must be non-empty")
+	}
+	return tableNameEntity{tableName: tableName}
 }
 
 // tx holds a PostgreSQL transaction
@@ -88,17 +95,24 @@ type AggregateDocument struct {
 	SchemaVersion uint64          `json:"schema"`
 }
 
-func getTableName(entity TableStore) string {
-	return string(entity.TableName())
+func getTableName(storageOptions []core.StorageOption) string {
+	var tableName TableName
+	if len(storageOptions) > 0 {
+		for _, opt := range storageOptions {
+			if opt, ok := opt.(tableNameEntity); ok {
+				tableName = opt.tableName
+				break
+			}
+		}
+	}
+	if tableName == "" {
+		panic("Table name is required. Provide WithTableName storage option.")
+	}
+	return string(tableName)
 }
 
 func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer, options ...core.LoadOption) error {
-	entity, ok := target.(TableStore)
-	if !ok {
-		panic("target must implement TableStore")
-	}
-
-	tableName := getTableName(entity)
+	tableName := getTableName(target.StorageOptions())
 	// Use FOR UPDATE when in a transaction to ensure proper locking
 	query := fmt.Sprintf(`SELECT id, version, data, COALESCE(schema_version, 1) FROM %s WHERE id = $1`, tableName)
 	if r.tx != nil {
@@ -133,12 +147,7 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 // Save implements Repository.
 func (r *repository) Save(ctx context.Context, source core.Storer, options ...core.SaveOption) error {
 	return source.Store(func(identifier core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
-		entity, ok := source.(TableStore)
-		if !ok {
-			panic("source must implement TableStore")
-		}
-
-		tableName := getTableName(entity)
+		tableName := getTableName(source.StorageOptions())
 
 		deletionEvents := core.EventsOfType[core.Tombstone](events)
 		if len(deletionEvents) > 0 {

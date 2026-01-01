@@ -19,8 +19,15 @@ var _ core.Transactional = (*repository)(nil)
 
 type CollectionName string
 
-type CollectionStore interface {
-	CollectionName() CollectionName
+type collectionNameEntity struct {
+	collectionName CollectionName
+}
+
+func WithCollectionName(collectionName CollectionName) core.StorageOption {
+	if collectionName == "" {
+		panic("collection name must be non-empty")
+	}
+	return collectionNameEntity{collectionName: collectionName}
 }
 
 // Tx holds a MongoDB session + session context to run operations in a transaction.
@@ -103,24 +110,32 @@ type AggregateDocument[T any] struct {
 	SchemaVersion uint64 `bson:"schema"`
 }
 
-func getCollectionName(entity CollectionStore) string {
-	return string(entity.CollectionName())
+func getCollectionName(storageOptions []core.StorageOption) string {
+	var collectionName CollectionName
+	if len(storageOptions) > 0 {
+		for _, opt := range storageOptions {
+			if opt, ok := opt.(collectionNameEntity); ok {
+				collectionName = opt.collectionName
+				break
+			}
+		}
+	}
+	if collectionName == "" {
+		panic("Collection name is required. Provide WithCollectionName storage option.")
+	}
+	return string(collectionName)
 }
 
 // Load implements Repository.
 func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer, options ...core.LoadOption) error {
-	// Use transaction context if available
 	operationCtx := ctx
 	if r.tx != nil {
 		operationCtx = r.tx.ctx
 	}
 
-	entity, ok := target.(CollectionStore)
-	if !ok {
-		panic("target must implement CollectionStore")
-	}
+	collectionName := getCollectionName(target.StorageOptions())
 	var doc AggregateDocument[bson.RawValue]
-	err := r.db.Collection(getCollectionName(entity)).FindOne(operationCtx, bson.M{"_id": string(id)}).Decode(&doc)
+	err := r.db.Collection(collectionName).FindOne(operationCtx, bson.M{"_id": string(id)}).Decode(&doc)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return core.ErrAggregateNotFound
@@ -137,20 +152,14 @@ func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer,
 }
 
 // Save implements Repository.
-func (r *repository) Save(ctx context.Context, source core.Storer, options ...core.SaveOption) error {
-	return source.Store(func(identifier core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
-		// Use transaction context if available
+func (r *repository) Save(ctx context.Context, storer core.Storer, options ...core.SaveOption) error {
+	return storer.Store(func(identifier core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
 		operationCtx := ctx
 		if r.tx != nil {
 			operationCtx = r.tx.ctx
 		}
-
-		entity, ok := source.(CollectionStore)
-		if !ok {
-			panic("source must implement CollectionStore")
-		}
-
-		collection := r.db.Collection(getCollectionName(entity))
+		collectionName := getCollectionName(storer.StorageOptions())
+		collection := r.db.Collection(collectionName)
 
 		deletionEvents := core.EventsOfType[core.Tombstone](events)
 		if len(deletionEvents) > 0 {

@@ -20,8 +20,8 @@ type redisTestAgg struct {
 	testpkg.TestAggWrapper
 }
 
-func (r *redisTestAgg) Namespace() Namespace {
-	return "test_agg"
+func (r *redisTestAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{WithNamespace("test_agg")}
 }
 
 // redisTestContainer wraps a Redis testcontainer

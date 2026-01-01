@@ -16,8 +16,15 @@ var _ core.Repository = (*repository)(nil)
 
 type Namespace string
 
-type NamespacedEntity interface {
-	Namespace() Namespace
+type namespacedEntity struct {
+	namespace Namespace
+}
+
+func WithNamespace(namespace Namespace) core.StorageOption {
+	if namespace == "" {
+		panic("namespace must be non-empty")
+	}
+	return namespacedEntity{namespace: namespace}
 }
 
 type repository struct {
@@ -31,18 +38,24 @@ type AggregateDocument[T any] struct {
 	SchemaVersion uint64 `json:"schema_version,omitempty"`
 }
 
-func buildStorageKey(ns Namespace, identifier core.ID) string {
+func buildStorageKey(identifier core.ID, storageOptions []core.StorageOption) string {
+	var ns Namespace
+	if ns == "" && len(storageOptions) > 0 {
+		for _, opt := range storageOptions {
+			if opt, ok := opt.(namespacedEntity); ok {
+				ns = opt.namespace
+				break
+			}
+		}
+	}
+	if ns == "" {
+		panic("Namespace is required. Provide WithNamespace storage option.")
+	}
 	return fmt.Sprintf("%s:%s", string(ns), string(identifier))
 }
 
 func (r *repository) Load(ctx context.Context, id core.ID, target core.Restorer, options ...core.LoadOption) error {
-	entity, ok := target.(NamespacedEntity)
-	if !ok {
-		panic("target must implement NamespacedEntity")
-	}
-
-	storageKey := buildStorageKey(entity.Namespace(), id)
-
+	storageKey := buildStorageKey(id, target.StorageOptions())
 	rawData, err := r.conn.Get(ctx, storageKey).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -85,12 +98,7 @@ func (r *repository) Save(ctx context.Context, source core.Storer, options ...co
 	}
 
 	return source.Store(func(identifier core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, currentVersion core.Version, schemaVersion core.SchemaVersion) error {
-		entity, ok := source.(NamespacedEntity)
-		if !ok {
-			panic("source must implement NamespacedEntity")
-		}
-
-		storageKey := buildStorageKey(entity.Namespace(), identifier)
+		storageKey := buildStorageKey(identifier, source.StorageOptions())
 
 		deletionEvents := core.EventsOfType[core.Tombstone](events)
 		if len(deletionEvents) > 0 {

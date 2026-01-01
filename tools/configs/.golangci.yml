@@ -2,14 +2,9 @@ version: "2"
 linters:
   enable-all: true
   settings:
-    exhauststruct:
-      allow-empty: true
-      # Allows empty structures in return statements.
-      # Default: false
-      allow-empty-returns: true
-      # Allows empty structures in variable declarations.
-      # Default: false
-      allow-empty-declarations: true
+    exhaustruct:
+      allow-empty-returns: false
+      allow-empty-declarations: false
     staticcheck:
       checks:
         - all

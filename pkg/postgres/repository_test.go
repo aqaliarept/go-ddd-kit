@@ -34,8 +34,8 @@ type postgresTestAgg struct {
 	testpkg.TestAggWrapper
 }
 
-func (p *postgresTestAgg) TableName() TableName {
-	return "test_agg"
+func (p *postgresTestAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{WithTableName("test_agg")}
 }
 
 // postgresTestContainer wraps a PostgreSQL testcontainer

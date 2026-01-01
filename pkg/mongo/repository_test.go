@@ -23,13 +23,13 @@ type (
 	Repository = core.Repository
 )
 
-// testAgg wraps testpkg.TestAggWrapper and implements CollectionStore for MongoDB
+// testAgg wraps testpkg.TestAggWrapper and provides StorageOptions for MongoDB
 type testAgg struct {
 	testpkg.TestAggWrapper
 }
 
-func (t *testAgg) CollectionName() CollectionName {
-	return "test_agg"
+func (t *testAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{WithCollectionName("test_agg")}
 }
 
 func newTestAgg(id core.ID) *testAgg {
@@ -49,8 +49,8 @@ type mongoTestAgg struct {
 	testpkg.TestAggWrapper
 }
 
-func (m *mongoTestAgg) CollectionName() CollectionName {
-	return "test_agg"
+func (m *mongoTestAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{WithCollectionName("test_agg")}
 }
 
 // mongoTestContainer wraps a MongoDB testcontainer

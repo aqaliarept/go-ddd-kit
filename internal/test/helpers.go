@@ -41,6 +41,16 @@ func (ta *TestAggWrapper) Restore(id core.ID, version core.Version, schemaVersio
 	}
 }
 
+func (ta *TestAggWrapper) StorageOptions() []core.StorageOption {
+	if cmd, ok := ta.t.(interface {
+		StorageOptions() []core.StorageOption
+	}); !ok {
+		return []core.StorageOption{}
+	} else {
+		return cmd.StorageOptions()
+	}
+}
+
 func (ta *TestAggWrapper) Store(storeFunc func(id core.ID, aggregate core.AggregatePtr, storageState core.StatePtr, events core.EventPack, version core.Version, schemaVersion core.SchemaVersion) error) error {
 	if cmd, ok := ta.t.(interface {
 		Store(func(core.ID, core.AggregatePtr, core.StatePtr, core.EventPack, core.Version, core.SchemaVersion) error) error

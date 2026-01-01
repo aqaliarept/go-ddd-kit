@@ -63,6 +63,7 @@ func NewTestAgg(id core.ID) *TestAgg {
 }
 
 // StateTestAggState represents the state for state-only test aggregate
+//
 //nolint:govet
 type StateTestAggState struct {
 	Value    string

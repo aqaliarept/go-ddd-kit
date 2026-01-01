@@ -113,7 +113,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		require.NoError(t, err)
 
 		agg1 := newTestAggForLoad()
-		err = repo0.Load(tctx, id, agg1)
+		err = repo1.Load(tctx, id, agg1)
 		require.NoError(t, err)
 
 		_, err = agg1.SingleEventCommand("test-agg-value-1")
@@ -143,8 +143,8 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		attempts := DefaultRetryAttempts - 1
 
 		// Execute transaction that will fail using ConcurrentScope
-		err := concurrentScope.Run(ctx,
-			func(ctx context.Context, repo Repository) error {
+		_, err := concurrentScope.Run(ctx,
+			func(ctx context.Context, repo core.Repository) error {
 				// Create and save aggregate within concurrent scope
 				agg := newTestAgg("concurrent-scope-retry-success-id")
 				_, err := agg.SingleEventCommand("concurrent-scope-retry-success-value")
@@ -183,7 +183,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		ctx := context.Background()
 
 		// Execute transaction that will fail using ConcurrentScope
-		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			// Create and save aggregate within concurrent scope
 			agg := newTestAgg("concurrent-scope-retry-id")
 			_, err := agg.SingleEventCommand("concurrent-scope-retry-value")
@@ -220,7 +220,7 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		ctx := context.Background()
 
 		// Execute transaction with aggregate updates using ConcurrentScope
-		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			// Create initial aggregate
 			agg := newTestAgg("concurrent-scope-updates-id")
 			_, err := agg.SingleEventCommand("initial-value")
@@ -280,8 +280,8 @@ func TestMongoRepository_ConcurrentScope(t *testing.T) {
 		require.NoError(t, err)
 
 		// Execute transaction that tries to modify the same aggregate using ConcurrentScope
-		err = concurrentScope.Run(ctx,
-			func(ctx context.Context, repo Repository) error {
+		_, err = concurrentScope.Run(ctx,
+			func(ctx context.Context, repo core.Repository) error {
 				// Load the aggregate within concurrent scope
 				txAgg := newTestAggForLoad()
 				err = repo.Load(ctx, "concurrent-scope-concurrent-id", txAgg)

@@ -830,7 +830,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   Then the aggregate should be visible after transaction commit
   And the aggregate state should match the saved state`, func(t *testing.T) {
 		t.Parallel()
-		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseAgg := NewTestAgg("tx-scope-success-id")
 			agg := runner.NewAggregate(baseAgg)
 			_, err := agg.SingleEventCommand("tx-scope-success-value")
@@ -869,7 +869,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   And the error should be ErrAggregateNotFound
   And the aggregate should not have been persisted`, func(t *testing.T) {
 		t.Parallel()
-		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseAgg := NewTestAgg("tx-scope-rollback-id")
 			agg := runner.NewAggregate(baseAgg)
 			_, err := agg.SingleEventCommand("tx-scope-rollback-value")
@@ -906,7 +906,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   Then all aggregates should be visible
   And all aggregate states should match the saved states`, func(t *testing.T) {
 		t.Parallel()
-		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			for i := 0; i < 3; i++ {
 				baseAgg := NewTestAgg(core.ID(fmt.Sprintf("tx-scope-multi-id-%d", i)))
 				agg := runner.NewAggregate(baseAgg)
@@ -960,7 +960,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		err = concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err = concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseLoadedAgg := &TestAgg{}
 			loadedAgg := runner.NewAggregate(baseLoadedAgg)
 			err = repo.Load(ctx, "tx-scope-readonly-id", loadedAgg)
@@ -995,7 +995,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   And all errors should be ErrAggregateNotFound
   And no aggregates should have been persisted`, func(t *testing.T) {
 		t.Parallel()
-		err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
+		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			baseAgg1 := NewTestAgg("tx-scope-cleanup-1")
 			agg1 := runner.NewAggregate(baseAgg1)
 			_, err := agg1.SingleEventCommand("value-1")

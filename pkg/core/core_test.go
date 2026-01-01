@@ -58,6 +58,10 @@ type testAgg struct {
 	Aggregate[testAggState]
 }
 
+func (t *testAgg) StorageOptions() []StorageOption {
+	return []StorageOption{}
+}
+
 const (
 	guardErrorValue = "guard_error"
 )

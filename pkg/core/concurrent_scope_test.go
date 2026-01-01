@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -49,7 +50,9 @@ func (m *mockRepository) Save(ctx context.Context, aggregate Storer, options ...
 	if m.saveFunc != nil {
 		return m.saveFunc(ctx, aggregate, options...)
 	}
-	return nil
+	return aggregate.Store(func(id ID, aggPtr AggregatePtr, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error {
+		return nil
+	})
 }
 
 type mockTransactional struct {
@@ -119,6 +122,79 @@ type contextKey string
 
 const testContextKey contextKey = "test-key"
 
+type ChangesExpectation struct {
+	Aggregates map[AggregatePtr]EventPacksExpectation
+}
+
+type EventPacksExpectation struct {
+	verify func(*testing.T, AggregatePtr)
+	Events [][]Event
+}
+
+func ExpectChanges[T any](aggPtr AggregatePtr, events [][]Event, verifyFn func(*testing.T, T)) ChangesExpectation {
+	return ChangesExpectation{
+		Aggregates: map[AggregatePtr]EventPacksExpectation{
+			aggPtr: {
+				Events: events,
+				verify: func(t *testing.T, ptr AggregatePtr) {
+					switch agg := any(ptr).(type) {
+					case T:
+						verifyFn(t, agg)
+					default:
+						t.Fatalf("unexpected aggregate type: %T", agg)
+					}
+				},
+			},
+		},
+	}
+}
+
+func ExpectChangesWithoutVerification(aggPtr AggregatePtr, events [][]Event) ChangesExpectation {
+	return ChangesExpectation{
+		Aggregates: map[AggregatePtr]EventPacksExpectation{
+			aggPtr: {
+				Events: events,
+			},
+		},
+	}
+}
+
+func MergeExpectations(expectations ...ChangesExpectation) ChangesExpectation {
+	result := ChangesExpectation{
+		Aggregates: make(map[AggregatePtr]EventPacksExpectation),
+	}
+	for _, exp := range expectations {
+		maps.Copy(result.Aggregates, exp.Aggregates)
+	}
+	return result
+}
+
+func verifyChanges(t *testing.T, changes map[AggregatePtr][]EventPack, expectation ChangesExpectation) {
+	t.Helper()
+
+	if expectation.Aggregates == nil {
+		return
+	}
+
+	for actualAggPtr, actualPacks := range changes {
+		expectedPacks, hasExpectation := expectation.Aggregates[actualAggPtr]
+		if !hasExpectation {
+			continue
+		}
+
+		actualEvents := make([][]Event, len(actualPacks))
+		for i, pack := range actualPacks {
+			actualEvents[i] = pack
+		}
+
+		require.Equal(t, expectedPacks.Events, actualEvents)
+
+		if expectedPacks.verify != nil {
+			expectedPacks.verify(t, actualAggPtr)
+		}
+	}
+}
+
 func TestNewConcurrentScope(t *testing.T) {
 	t.Run(`Given a repository factory
 		When NewConcurrentScope is called with default options
@@ -160,7 +236,7 @@ func TestNewConcurrentScope(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount == 1 {
 				return ErrTransient
@@ -172,6 +248,7 @@ func TestNewConcurrentScope(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.GreaterOrEqual(t, callCount, 3)
 	})
 
@@ -230,7 +307,7 @@ func TestWithRetryOptions(t *testing.T) {
 
 		customOpts := WithRetryOptions(retry.Attempts(2))
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 2 {
 				return ErrTransient
@@ -239,6 +316,7 @@ func TestWithRetryOptions(t *testing.T) {
 		}, customOpts)
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, callCount)
 	})
 }
@@ -253,12 +331,13 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		executed := false
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			executed = true
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.True(t, executed)
 		require.Equal(t, 1, factory.getCallCount())
 	})
@@ -273,12 +352,14 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 
 		expectedErr := errors.New("non-retryable error")
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return expectedErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, expectedErr) || errors.Unwrap(err) == expectedErr)
 		require.Contains(t, err.Error(), "non-retryable error")
 		require.Equal(t, 1, callCount)
@@ -294,7 +375,7 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 3 {
 				return ErrTransient
@@ -303,6 +384,7 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 3, callCount)
 		require.Equal(t, 3, factory.getCallCount())
 	})
@@ -316,7 +398,7 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 2 {
 				return ErrConcurrentModification
@@ -325,6 +407,7 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, callCount)
 		require.Equal(t, 2, factory.getCallCount())
 	})
@@ -338,12 +421,14 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return ErrTransient
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.ErrorIs(t, err, ErrTransient)
 		require.Equal(t, 2, callCount)
 		require.Equal(t, 2, factory.getCallCount())
@@ -358,7 +443,7 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(5), retry.Delay(10*time.Millisecond)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount == 1 {
 				return ErrTransient
@@ -370,6 +455,7 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 3, callCount)
 		require.Equal(t, 3, factory.getCallCount())
 	})
@@ -384,12 +470,14 @@ func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
 
 		customOpts := WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond))
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return ErrTransient
 		}, customOpts)
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.Equal(t, 2, callCount)
 	})
 }
@@ -410,12 +498,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		executed := false
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			executed = true
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.True(t, executed)
 		require.Equal(t, 1, txRepo.getBeginCount())
 		require.Equal(t, 1, txRepo.getCommitCount())
@@ -444,12 +533,14 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return nil
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, beginErr) || errors.Unwrap(err) == beginErr)
 		require.Contains(t, err.Error(), "begin failed")
 		require.Equal(t, 0, callCount)
@@ -484,12 +575,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
 		executed := false
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			executed = true
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.True(t, executed)
 		require.Equal(t, 2, beginCallCount)
 		require.Equal(t, 1, txRepo.getCommitCount())
@@ -508,11 +600,12 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 1, txRepo.getBeginCount())
 		require.Equal(t, 1, txRepo.getCommitCount())
 		require.Equal(t, 0, txRepo.getRollbackCount())
@@ -539,12 +632,14 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return nil
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, commitErr) || errors.Unwrap(err) == commitErr)
 		require.Contains(t, err.Error(), "commit failed")
 		require.Equal(t, 1, callCount)
@@ -577,11 +672,12 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, commitCallCount)
 		require.Equal(t, 2, txRepo.getBeginCount())
 		require.Equal(t, 2, txRepo.getCommitCount())
@@ -601,11 +697,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.Equal(t, 1, txRepo.getBeginCount())
 		require.Equal(t, 0, txRepo.getCommitCount())
@@ -639,11 +737,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope.rollbackTimeout = 100 * time.Millisecond
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.Equal(t, 1, txRepo.getRollbackCount())
 	})
@@ -670,11 +770,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.True(t, errors.Is(err, rollbackErr))
 		require.Equal(t, 1, txRepo.getRollbackCount())
@@ -694,11 +796,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.Equal(t, 1, txRepo.getRollbackCount())
 	})
@@ -735,11 +839,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope.rollbackTimeout = 100 * time.Millisecond
 
 		runErr := errors.New("run function error")
-		err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, rollbackCalled)
 		require.Equal(t, 1, txRepo.getRollbackCount())
 	})
@@ -760,12 +866,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		executed := false
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			executed = true
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.True(t, executed)
 		require.Equal(t, 1, txRepo.getBeginCount())
 		require.Equal(t, 1, txRepo.getCommitCount())
@@ -788,11 +895,13 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.Equal(t, 1, txRepo.getBeginCount())
 		require.Equal(t, 0, txRepo.getCommitCount())
@@ -815,7 +924,7 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			runCallCount++
 			if runCallCount < 2 {
 				return ErrTransient
@@ -824,6 +933,7 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, runCallCount)
 		require.Equal(t, 2, txRepo.getBeginCount())
 		require.Equal(t, 1, txRepo.getCommitCount())
@@ -846,7 +956,7 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			runCallCount++
 			if runCallCount < 2 {
 				return ErrConcurrentModification
@@ -855,6 +965,7 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, runCallCount)
 		require.Equal(t, 2, txRepo.getBeginCount())
 		require.Equal(t, 1, txRepo.getCommitCount())
@@ -877,7 +988,7 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			runCallCount++
 			if runCallCount < 3 {
 				return ErrTransient
@@ -886,6 +997,7 @@ func TestConcurrentScope_Run_Transactional(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 3, runCallCount)
 		require.Equal(t, 3, createCount)
 		require.Equal(t, 3, txRepo.getBeginCount())
@@ -905,7 +1017,7 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		factory := &mockRepositoryFactory{}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
+		changes, err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
 			select {
 			case <-runCtx.Done():
 				return runCtx.Err()
@@ -915,6 +1027,8 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -926,7 +1040,7 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		factory := &mockRepositoryFactory{}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
 			cancel()
 			select {
 			case <-ctx.Done():
@@ -937,6 +1051,8 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -950,7 +1066,7 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		factory := &mockRepositoryFactory{}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
+		changes, err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
 			select {
 			case <-runCtx.Done():
 				return runCtx.Err()
@@ -960,6 +1076,8 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
@@ -980,12 +1098,13 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		var runFuncCtx context.Context
-		err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
+		changes, err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
 			runFuncCtx = runCtx
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, ctx, receivedCtx)
 		require.NotNil(t, runFuncCtx)
 	})
@@ -1021,12 +1140,14 @@ func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
 		scope.rollbackTimeout = 100 * time.Millisecond
 
 		runErr := errors.New("run function error")
-		err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
 			cancel()
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.NotNil(t, rollbackCtx)
 		require.NotEqual(t, ctx, rollbackCtx)
 	})
@@ -1041,7 +1162,7 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 2 {
 				return ErrTransient
@@ -1050,6 +1171,7 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.GreaterOrEqual(t, callCount, 2)
 	})
 
@@ -1061,12 +1183,14 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return ErrTransient
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.Equal(t, 2, callCount)
 	})
 
@@ -1079,12 +1203,14 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 
 		customOpts := WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond))
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			return ErrTransient
 		}, customOpts)
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.Equal(t, 2, callCount)
 	})
 
@@ -1099,7 +1225,7 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 		opts1 := WithRetryOptions(retry.Attempts(5))
 		opts2 := WithRetryOptions(retry.Delay(10 * time.Millisecond))
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 3 {
 				return ErrTransient
@@ -1108,6 +1234,7 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 		}, opts1, opts2)
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 3, callCount)
 	})
 
@@ -1121,7 +1248,7 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 
 		invalidOpt := "not a retryOptions"
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 2 {
 				return ErrTransient
@@ -1130,6 +1257,7 @@ func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
 		}, invalidOpt)
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, callCount)
 	})
 }
@@ -1143,11 +1271,13 @@ func TestConcurrentScope_Run_ErrorPropagation(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		expectedErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return expectedErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, expectedErr) || errors.Unwrap(err) == expectedErr)
 		require.Contains(t, err.Error(), "run function error")
 	})
@@ -1171,11 +1301,13 @@ func TestConcurrentScope_Run_ErrorPropagation(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return nil
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, beginErr) || errors.Unwrap(err) == beginErr)
 		require.Contains(t, err.Error(), "begin error")
 	})
@@ -1199,11 +1331,13 @@ func TestConcurrentScope_Run_ErrorPropagation(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return nil
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, commitErr) || errors.Unwrap(err) == commitErr)
 		require.Contains(t, err.Error(), "commit error")
 	})
@@ -1230,11 +1364,13 @@ func TestConcurrentScope_Run_ErrorPropagation(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.True(t, errors.Is(err, rollbackErr))
 	})
@@ -1266,11 +1402,13 @@ func TestConcurrentScope_Run_ErrorPropagation(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		runErr := errors.New("run function error")
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return runErr
 		})
 
 		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
 		require.True(t, errors.Is(err, runErr))
 		require.True(t, errors.Is(err, rollbackErr1))
 	})
@@ -1286,12 +1424,13 @@ func TestConcurrentScope_Run_EdgeCases(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		executed := false
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			executed = true
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.True(t, executed)
 	})
 
@@ -1308,11 +1447,12 @@ func TestConcurrentScope_Run_EdgeCases(t *testing.T) {
 		}
 		scope := NewConcurrentScope(factory)
 
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 1, txRepo.getBeginCount())
 		require.Equal(t, 1, txRepo.getCommitCount())
 	})
@@ -1331,12 +1471,13 @@ func TestConcurrentScope_Run_EdgeCases(t *testing.T) {
 		scope := NewConcurrentScope(factory)
 
 		executed := false
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			executed = true
 			return nil
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.True(t, executed)
 	})
 
@@ -1354,7 +1495,7 @@ func TestConcurrentScope_Run_EdgeCases(t *testing.T) {
 		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
 
 		callCount := 0
-		err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
 			callCount++
 			if callCount < 2 {
 				return ErrTransient
@@ -1363,7 +1504,176 @@ func TestConcurrentScope_Run_EdgeCases(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.NotNil(t, changes)
 		require.Equal(t, 2, callCount)
 		require.Equal(t, 2, createCount)
+	})
+}
+
+func TestConcurrentScope_Run_ChangesTracking(t *testing.T) {
+	t.Run(`Given a repository
+		When Run is called and a single aggregate is saved
+		Then changes map should contain the aggregate
+		And should have one event pack with the aggregate's events
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			return repo.Save(ctx, agg)
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, ExpectChanges[*testAgg](
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+			func(t *testing.T, agg *testAgg) {
+				require.Equal(t, "test-value", agg.State().MyString)
+			},
+		))
+	})
+
+	t.Run(`Given a repository
+		When Run is called and multiple aggregates are saved
+		Then changes map should contain all aggregates
+		And each aggregate should have its events tracked
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate1, savedAggregate2 *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg1 := newTestAgg("test-id-1")
+			_, err := agg1.SingleEventCommand("value-1")
+			require.NoError(t, err)
+			savedAggregate1 = agg1
+			if saveErr := repo.Save(ctx, agg1); saveErr != nil {
+				return saveErr
+			}
+
+			agg2 := newTestAgg("test-id-2")
+			_, err = agg2.SingleEventCommand("value-2")
+			require.NoError(t, err)
+			savedAggregate2 = agg2
+			return repo.Save(ctx, agg2)
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, MergeExpectations(
+			ExpectChangesWithoutVerification(AggregatePtr(savedAggregate1), [][]Event{{Created{}, ValueUpdated{value: "value-1"}}}),
+			ExpectChangesWithoutVerification(AggregatePtr(savedAggregate2), [][]Event{{Created{}, ValueUpdated{value: "value-2"}}}),
+		))
+	})
+
+	t.Run(`Given a repository
+		When Run is called and the same aggregate is saved multiple times
+		Then changes map should contain the aggregate once
+		And should have multiple event packs for that aggregate
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			savedAggregate = agg
+
+			_, err := agg.SingleEventCommand("value-1")
+			require.NoError(t, err)
+			if saveErr := repo.Save(ctx, agg); saveErr != nil {
+				return saveErr
+			}
+
+			_, err = agg.SingleEventCommand("value-2")
+			require.NoError(t, err)
+			return repo.Save(ctx, agg)
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{
+				{Created{}, ValueUpdated{value: "value-1"}},
+				{ValueUpdated{value: "value-2"}},
+			},
+		))
+	})
+
+	t.Run(`Given a repository
+		When Run is called and no aggregates are saved
+		Then changes map should be empty
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, ChangesExpectation{})
+	})
+
+	t.Run(`Given a repository
+		When Run is called and an aggregate is saved but then an error occurs
+		Then changes map should still contain the aggregate's events
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		expectedErr := errors.New("operation failed")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			if err := repo.Save(ctx, agg); err != nil {
+				return err
+			}
+			return expectedErr
+		})
+
+		require.Error(t, err)
+		require.True(t, errors.Is(err, expectedErr))
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+		))
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and aggregates are saved successfully
+		Then changes map should contain all saved aggregates
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			return repo.Save(ctx, agg)
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+		))
 	})
 }
