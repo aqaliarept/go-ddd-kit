@@ -87,8 +87,9 @@ func (t *testAgg) MultipleEventsCommand(val string) (EventPack, error) {
 	})
 }
 
+//nolint:errcheck
 func (t *testAgg) SetError(err error) {
-	t.ProcessCommand(func(s *testAggState, er EventRiser) error {
+	_, _ = t.ProcessCommand(func(s *testAggState, er EventRiser) error {
 		return err
 	})
 }
@@ -402,15 +403,17 @@ func TestAggregateCheckErrorPanic(t *testing.T) {
 		})
 
 		require.PanicsWithValue(t, "aggregate state corrupted", func() {
-			_, _ = agg.ProcessCommand(func(s *testAggState, er EventRiser) error {
+			_, err := agg.ProcessCommand(func(s *testAggState, er EventRiser) error {
 				return nil
 			})
+			require.NoError(t, err)
 		})
 
 		require.PanicsWithValue(t, "aggregate state corrupted", func() {
-			_ = agg.Store(func(id ID, aggregate AggregatePtr, storageState StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
+			err := agg.Store(func(id ID, aggregate AggregatePtr, storageState StatePtr, ep EventPack, v Version, sv SchemaVersion) error {
 				return nil
 			})
+			require.NoError(t, err)
 		})
 	})
 }

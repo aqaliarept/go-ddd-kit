@@ -45,7 +45,8 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Panics(t, func() {
-			_, _ = tx.Begin(txCtx)
+			_, beginErr := tx.Begin(txCtx)
+			require.NoError(t, beginErr)
 		})
 
 		err = tx.Rollback(txCtx)
@@ -442,7 +443,8 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		}
 
 		require.Panics(t, func() {
-			_ = repo.Load(ctx, "no-table-name-id", agg)
+			err := repo.Load(ctx, "no-table-name-id", agg)
+			require.NoError(t, err)
 		})
 	})
 
