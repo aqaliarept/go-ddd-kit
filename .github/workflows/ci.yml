@@ -17,3 +17,17 @@ jobs:
 
       - name: Run ci
         run: chmod +x ./tools/run-ci-docker.sh && ./tools/run-ci-docker.sh
+
+      - name: Copy codecov config to root
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        run: cp ./tools/configs/codecov.yml ./codecov.yml
+
+      - name: Upload coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

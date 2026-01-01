@@ -1,4 +1,4 @@
-.PHONY: test lint build test-mongo
+.PHONY: test lint build test-mongo test-coverage coverage-html
 
 build:
 	go build work
@@ -6,8 +6,11 @@ build:
 test:
 	go test work -race
 
+test-coverage:
+	go test work -race -coverprofile=coverage.out -covermode=atomic
+	go tool cover -html=coverage.out -o coverage.html
+
 lint:
 	tools/lint.sh
 
-# Temporarily: run only mongo tests (excluding build and lint)
 ci: lint build test 

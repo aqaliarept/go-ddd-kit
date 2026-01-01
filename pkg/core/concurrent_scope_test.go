@@ -1677,3 +1677,117 @@ func TestConcurrentScope_Run_ChangesTracking(t *testing.T) {
 		))
 	})
 }
+
+func TestConcurrentScope_Run_LoadOperation(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and Load is executed through repoDecorator
+		Then Load should delegate to inner repository
+		And aggregate should be loaded successfully
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		loadedAgg := newTestAgg("load-test-id")
+		loadedAgg.version = 5
+		loadedAgg.state.MyString = "loaded-value"
+
+		loadCalled := false
+		repo := &mockRepository{
+			loadFunc: func(ctx context.Context, id ID, aggregate Restorer, options ...LoadOption) error {
+				loadCalled = true
+				require.Equal(t, ID("load-test-id"), id)
+				return aggregate.Restore(id, Version(5), DefaultSchemaVersion, func(state StatePtr) error {
+					s, ok := state.(*testAggState)
+					require.True(t, ok)
+					s.MyString = "loaded-value"
+					return nil
+				})
+			},
+		}
+		factory.createFunc = func(ctx context.Context) Repository {
+			return repo
+		}
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := &testAgg{}
+			return repo.Load(ctx, "load-test-id", agg)
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, loadCalled)
+	})
+}
+
+func TestConcurrentScope_Run_SaveError(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and Save returns an error
+		Then error should be propagated
+		And changes should be tracked before error
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		saveErr := errors.New("save failed")
+		repo := &mockRepository{
+			saveFunc: func(ctx context.Context, aggregate Storer, options ...SaveOption) error {
+				return saveErr
+			},
+		}
+		factory.createFunc = func(ctx context.Context) Repository {
+			return repo
+		}
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("save-error-id")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			return repo.Save(ctx, agg)
+		})
+
+		require.Error(t, err)
+		require.True(t, errors.Is(err, saveErr))
+		require.NotNil(t, changes)
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+		))
+	})
+}
+
+func TestConcurrentScope_Run_StoreError(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and Store returns an error
+		Then error should be propagated
+		And changes should not be tracked
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		storeErr := errors.New("store failed")
+		repo := &mockRepository{
+			saveFunc: func(ctx context.Context, aggregate Storer, options ...SaveOption) error {
+				return aggregate.Store(func(id ID, aggPtr AggregatePtr, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error {
+					return storeErr
+				})
+			},
+		}
+		factory.createFunc = func(ctx context.Context) Repository {
+			return repo
+		}
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("store-error-id")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			return repo.Save(ctx, agg)
+		})
+
+		require.Error(t, err)
+		require.True(t, errors.Is(err, storeErr))
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+	})
+}

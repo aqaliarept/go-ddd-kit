@@ -97,17 +97,12 @@ func (a *Aggregate[T]) ProcessCommand(handler func(state *T, er EventRiser) erro
 	// this trick removes heap allocation for the raiser struct
 	a.raiser = raiser[T]{a}
 	err := handler(&a.state, &a.raiser)
-	if err == nil {
-		return a.events[eventsCount:], nil
-	}
-	// if an error occur after command has spawned any events
-	// then the  aggregate is considered in corrupted state and can't be used anymore
-	if eventsCount == len(a.events) {
+	if err != nil {
+		a.err = err
+		a.events = nil
 		return nil, err
 	}
-	a.err = err
-	a.events = nil
-	return nil, err
+	return a.events[eventsCount:], nil
 }
 
 func (a *Aggregate[T]) ID() ID {

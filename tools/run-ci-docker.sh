@@ -25,5 +25,5 @@ docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock \
     --privileged \
     "$CI_IMAGE" \
-    bash -c "make ci"
+    bash -c "make ci && make test-coverage"
 
