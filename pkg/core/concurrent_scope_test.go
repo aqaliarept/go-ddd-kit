@@ -1,0 +1,1793 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"maps"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/avast/retry-go/v4"
+	"github.com/stretchr/testify/require"
+)
+
+type mockRepositoryFactory struct {
+	createFunc func(ctx context.Context) Repository
+	callCount  int
+	mu         sync.Mutex
+}
+
+func (m *mockRepositoryFactory) Create(ctx context.Context) Repository {
+	m.mu.Lock()
+	m.callCount++
+	m.mu.Unlock()
+	if m.createFunc != nil {
+		return m.createFunc(ctx)
+	}
+	return &mockRepository{}
+}
+
+func (m *mockRepositoryFactory) getCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
+}
+
+type mockRepository struct {
+	loadFunc func(ctx context.Context, id ID, aggregate Restorer, options ...LoadOption) error
+	saveFunc func(ctx context.Context, aggregate Storer, options ...SaveOption) error
+}
+
+func (m *mockRepository) Load(ctx context.Context, id ID, aggregate Restorer, options ...LoadOption) error {
+	if m.loadFunc != nil {
+		return m.loadFunc(ctx, id, aggregate, options...)
+	}
+	return nil
+}
+
+func (m *mockRepository) Save(ctx context.Context, aggregate Storer, options ...SaveOption) error {
+	if m.saveFunc != nil {
+		return m.saveFunc(ctx, aggregate, options...)
+	}
+	return aggregate.Store(func(id ID, aggPtr AggregatePtr, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error {
+		return nil
+	})
+}
+
+type mockTransactional struct {
+	beginFunc     func(ctx context.Context) (context.Context, error)
+	commitFunc    func(ctx context.Context) error
+	rollbackFunc  func(ctx context.Context) error
+	beginCount    int
+	commitCount   int
+	rollbackCount int
+	mu            sync.Mutex
+}
+
+func (m *mockTransactional) Begin(ctx context.Context) (context.Context, error) {
+	m.mu.Lock()
+	m.beginCount++
+	m.mu.Unlock()
+	if m.beginFunc != nil {
+		return m.beginFunc(ctx)
+	}
+	return ctx, nil
+}
+
+func (m *mockTransactional) Commit(ctx context.Context) error {
+	m.mu.Lock()
+	m.commitCount++
+	m.mu.Unlock()
+	if m.commitFunc != nil {
+		return m.commitFunc(ctx)
+	}
+	return nil
+}
+
+func (m *mockTransactional) Rollback(ctx context.Context) error {
+	m.mu.Lock()
+	m.rollbackCount++
+	m.mu.Unlock()
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx)
+	}
+	return nil
+}
+
+func (m *mockTransactional) getBeginCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.beginCount
+}
+
+func (m *mockTransactional) getCommitCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commitCount
+}
+
+func (m *mockTransactional) getRollbackCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.rollbackCount
+}
+
+type mockTransactionalRepository struct {
+	mockRepository
+	mockTransactional
+}
+
+type contextKey string
+
+const testContextKey contextKey = "test-key"
+
+type ChangesExpectation struct {
+	Aggregates map[AggregatePtr]EventPacksExpectation
+}
+
+type EventPacksExpectation struct {
+	verify func(*testing.T, AggregatePtr)
+	Events [][]Event
+}
+
+func ExpectChanges[T any](aggPtr AggregatePtr, events [][]Event, verifyFn func(*testing.T, T)) ChangesExpectation {
+	return ChangesExpectation{
+		Aggregates: map[AggregatePtr]EventPacksExpectation{
+			aggPtr: {
+				Events: events,
+				verify: func(t *testing.T, ptr AggregatePtr) {
+					switch agg := any(ptr).(type) {
+					case T:
+						verifyFn(t, agg)
+					default:
+						t.Fatalf("unexpected aggregate type: %T", agg)
+					}
+				},
+			},
+		},
+	}
+}
+
+func ExpectChangesWithoutVerification(aggPtr AggregatePtr, events [][]Event) ChangesExpectation {
+	return ChangesExpectation{
+		Aggregates: map[AggregatePtr]EventPacksExpectation{
+			aggPtr: {
+				Events: events,
+			},
+		},
+	}
+}
+
+func MergeExpectations(expectations ...ChangesExpectation) ChangesExpectation {
+	result := ChangesExpectation{
+		Aggregates: make(map[AggregatePtr]EventPacksExpectation),
+	}
+	for _, exp := range expectations {
+		maps.Copy(result.Aggregates, exp.Aggregates)
+	}
+	return result
+}
+
+func verifyChanges(t *testing.T, changes map[AggregatePtr][]EventPack, expectation ChangesExpectation) {
+	t.Helper()
+
+	if expectation.Aggregates == nil {
+		return
+	}
+
+	for actualAggPtr, actualPacks := range changes {
+		expectedPacks, hasExpectation := expectation.Aggregates[actualAggPtr]
+		if !hasExpectation {
+			continue
+		}
+
+		actualEvents := make([][]Event, len(actualPacks))
+		for i, pack := range actualPacks {
+			actualEvents[i] = pack
+		}
+
+		require.Equal(t, expectedPacks.Events, actualEvents)
+
+		if expectedPacks.verify != nil {
+			expectedPacks.verify(t, actualAggPtr)
+		}
+	}
+}
+
+func TestNewConcurrentScope(t *testing.T) {
+	t.Run(`Given a repository factory
+		When NewConcurrentScope is called with default options
+		Then ConcurrentScope should be created with default retry options
+		And rollback timeout should be set to 5 seconds
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		require.NotNil(t, scope)
+		require.Equal(t, factory, scope.factory)
+		require.NotNil(t, scope.retryOpts)
+		require.Equal(t, 5*time.Second, scope.rollbackTimeout)
+		require.Greater(t, len(scope.retryOpts), 0)
+	})
+
+	t.Run(`Given a repository factory
+		When NewConcurrentScope is called with custom retry options
+		Then ConcurrentScope should be created with merged retry options
+		And custom options should be included
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(
+			retry.Attempts(5),
+			retry.Delay(100*time.Millisecond),
+		))
+
+		require.NotNil(t, scope)
+		require.Equal(t, factory, scope.factory)
+		require.Greater(t, len(scope.retryOpts), 1)
+	})
+
+	t.Run(`Given a ConcurrentScope with default RetryIf condition
+		When Run is called and returns ErrTransient or ErrConcurrentModification
+		Then the operation should be retried
+		And eventually succeed
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount == 1 {
+				return ErrTransient
+			}
+			if callCount == 2 {
+				return ErrConcurrentModification
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.GreaterOrEqual(t, callCount, 3)
+	})
+
+	t.Run(`Given a repository factory
+		When NewConcurrentScope is called with WithRollbackTimeout
+		Then ConcurrentScope should be created with custom rollback timeout
+		And timeout should match the provided value
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		customTimeout := 15 * time.Second
+		scope := NewConcurrentScope(factory, WithRollbackTimeout(customTimeout))
+
+		require.NotNil(t, scope)
+		require.Equal(t, customTimeout, scope.rollbackTimeout)
+	})
+
+	t.Run(`Given a repository factory
+		When NewConcurrentScope is called with both retry options and rollback timeout
+		Then ConcurrentScope should be created with both options applied
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		customTimeout := 20 * time.Second
+		scope := NewConcurrentScope(factory,
+			WithRetryOptions(retry.Attempts(3)),
+			WithRollbackTimeout(customTimeout),
+		)
+
+		require.NotNil(t, scope)
+		require.Equal(t, customTimeout, scope.rollbackTimeout)
+		require.Greater(t, len(scope.retryOpts), 0)
+	})
+}
+
+func TestWithRetryOptions(t *testing.T) {
+	t.Run(`Given retry options
+		When WithRetryOptions is called
+		Then retryOptions type should be created
+		And should contain the provided options
+	`, func(t *testing.T) {
+		opts := []retry.Option{retry.Attempts(3)}
+		result := WithRetryOptions(opts...)
+
+		require.NotNil(t, result)
+		retryOpts, ok := result.(retryOptions)
+		require.True(t, ok)
+		require.Equal(t, opts, retryOpts.retryOptions)
+	})
+
+	t.Run(`Given a ConcurrentScope
+		When Run is called with WithRetryOptions
+		Then type assertion should work correctly
+		And custom retry options should be applied
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		customOpts := WithRetryOptions(retry.Attempts(2))
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 2 {
+				return ErrTransient
+			}
+			return nil
+		}, customOpts)
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, callCount)
+	})
+}
+
+func TestConcurrentScope_Run_NonTransactional(t *testing.T) {
+	t.Run(`Given a non-transactional repository
+		When Run is called with a function that succeeds
+		Then the function should execute successfully
+		And no retries should occur
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		executed := false
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			executed = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, executed)
+		require.Equal(t, 1, factory.getCallCount())
+	})
+
+	t.Run(`Given a non-transactional repository
+		When Run is called with a function that returns a non-retryable error
+		Then the error should be returned immediately
+		And no retries should occur
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3)))
+
+		expectedErr := errors.New("non-retryable error")
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return expectedErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, expectedErr) || errors.Unwrap(err) == expectedErr)
+		require.Contains(t, err.Error(), "non-retryable error")
+		require.Equal(t, 1, callCount)
+		require.Equal(t, 1, factory.getCallCount())
+	})
+
+	t.Run(`Given a non-transactional repository
+		When Run is called and function returns ErrTransient
+		Then the operation should be retried
+		And eventually succeed
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 3 {
+				return ErrTransient
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 3, callCount)
+		require.Equal(t, 3, factory.getCallCount())
+	})
+
+	t.Run(`Given a non-transactional repository
+		When Run is called and function returns ErrConcurrentModification
+		Then the operation should be retried
+		And eventually succeed
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 2 {
+				return ErrConcurrentModification
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, callCount)
+		require.Equal(t, 2, factory.getCallCount())
+	})
+
+	t.Run(`Given a non-transactional repository with limited retry attempts
+		When Run is called and function always returns ErrTransient
+		Then retries should be exhausted
+		And ErrTransient should be returned
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return ErrTransient
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.ErrorIs(t, err, ErrTransient)
+		require.Equal(t, 2, callCount)
+		require.Equal(t, 2, factory.getCallCount())
+	})
+
+	t.Run(`Given a non-transactional repository
+		When Run is called and function returns mixed retryable errors
+		Then the operation should be retried for each error type
+		And eventually succeed
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(5), retry.Delay(10*time.Millisecond)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount == 1 {
+				return ErrTransient
+			}
+			if callCount == 2 {
+				return ErrConcurrentModification
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 3, callCount)
+		require.Equal(t, 3, factory.getCallCount())
+	})
+
+	t.Run(`Given a ConcurrentScope with default retry options
+		When Run is called with custom retry options via RunOptions
+		Then custom options should override default options
+		And be applied to the retry logic
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(10)))
+
+		customOpts := WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond))
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return ErrTransient
+		}, customOpts)
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.Equal(t, 2, callCount)
+	})
+}
+
+func TestConcurrentScope_Run_Transactional(t *testing.T) {
+	t.Run(`Given a transactional repository
+		When Run is called and Begin succeeds
+		Then transaction should begin
+		And runFunc should execute
+		And transaction should commit
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		executed := false
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			executed = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, executed)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 0, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Begin fails with non-retryable error
+		Then Begin error should be returned
+		And runFunc should not be called
+		And no commit or rollback should occur
+	`, func(t *testing.T) {
+		beginErr := errors.New("begin failed")
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				beginFunc: func(ctx context.Context) (context.Context, error) {
+					return nil, beginErr
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return nil
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, beginErr) || errors.Unwrap(err) == beginErr)
+		require.Contains(t, err.Error(), "begin failed")
+		require.Equal(t, 0, callCount)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 0, txRepo.getCommitCount())
+		require.Equal(t, 0, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Begin returns ErrTransient
+		Then Begin should be retried
+		And eventually succeed
+		And transaction should commit
+	`, func(t *testing.T) {
+		beginCallCount := 0
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				beginFunc: func(ctx context.Context) (context.Context, error) {
+					beginCallCount++
+					if beginCallCount < 2 {
+						return nil, ErrTransient
+					}
+					return ctx, nil
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		executed := false
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			executed = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, executed)
+		require.Equal(t, 2, beginCallCount)
+		require.Equal(t, 1, txRepo.getCommitCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc succeeds
+		Then transaction should commit successfully
+		And no rollback should occur
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 0, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Commit fails
+		Then Commit error should be returned
+		And no rollback should occur
+	`, func(t *testing.T) {
+		commitErr := errors.New("commit failed")
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				commitFunc: func(ctx context.Context) error {
+					return commitErr
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return nil
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, commitErr) || errors.Unwrap(err) == commitErr)
+		require.Contains(t, err.Error(), "commit failed")
+		require.Equal(t, 1, callCount)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 0, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Commit returns ErrTransient
+		Then Commit should be retried
+		And eventually succeed
+	`, func(t *testing.T) {
+		commitCallCount := 0
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				commitFunc: func(ctx context.Context) error {
+					commitCallCount++
+					if commitCallCount < 2 {
+						return ErrTransient
+					}
+					return nil
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, commitCallCount)
+		require.Equal(t, 2, txRepo.getBeginCount())
+		require.Equal(t, 2, txRepo.getCommitCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc returns an error
+		Then transaction should be rolled back
+		And runFunc error should be returned
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 0, txRepo.getCommitCount())
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository with rollback timeout
+		When Run is called and runFunc returns an error
+		And Rollback takes longer than timeout
+		Then rollback should be cancelled after timeout
+		And runFunc error should be returned
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				rollbackFunc: func(ctx context.Context) error {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(2 * time.Second):
+						return nil
+					}
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+		scope.rollbackTimeout = 100 * time.Millisecond
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc returns an error
+		And Rollback also returns an error
+		Then both errors should be joined
+		And returned together
+	`, func(t *testing.T) {
+		rollbackErr := errors.New("rollback failed")
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				rollbackFunc: func(ctx context.Context) error {
+					return rollbackErr
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.True(t, errors.Is(err, rollbackErr))
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc returns an error
+		And Rollback succeeds
+		Then runFunc error should be returned
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called with a cancelled context
+		And runFunc returns an error
+		Then Rollback should use independent context
+		And not be affected by original context cancellation
+	`, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		rollbackCalled := false
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				rollbackFunc: func(rollbackCtx context.Context) error {
+					rollbackCalled = true
+					select {
+					case <-rollbackCtx.Done():
+						return rollbackCtx.Err()
+					default:
+						return nil
+					}
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+		scope.rollbackTimeout = 100 * time.Millisecond
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, rollbackCalled)
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called with successful runFunc
+		Then Begin should be called
+		And runFunc should execute
+		And Commit should be called
+		And no Rollback should occur
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		executed := false
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			executed = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, executed)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 0, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc returns an error
+		Then Begin should be called
+		And runFunc should execute
+		And Rollback should be called
+		And no Commit should occur
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 0, txRepo.getCommitCount())
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Begin succeeds
+		And runFunc returns ErrTransient
+		Then transaction should be rolled back
+		And operation should be retried
+		And eventually succeed
+	`, func(t *testing.T) {
+		runCallCount := 0
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			runCallCount++
+			if runCallCount < 2 {
+				return ErrTransient
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, runCallCount)
+		require.Equal(t, 2, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Begin succeeds
+		And runFunc returns ErrConcurrentModification
+		Then transaction should be rolled back
+		And operation should be retried
+		And eventually succeed
+	`, func(t *testing.T) {
+		runCallCount := 0
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			runCallCount++
+			if runCallCount < 2 {
+				return ErrConcurrentModification
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, runCallCount)
+		require.Equal(t, 2, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 1, txRepo.getRollbackCount())
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc returns ErrTransient multiple times
+		Then new transaction should be created on each retry
+		And eventually succeed
+	`, func(t *testing.T) {
+		runCallCount := 0
+		createCount := 0
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				createCount++
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			runCallCount++
+			if runCallCount < 3 {
+				return ErrTransient
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 3, runCallCount)
+		require.Equal(t, 3, createCount)
+		require.Equal(t, 3, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		require.Equal(t, 2, txRepo.getRollbackCount())
+	})
+}
+
+func TestConcurrentScope_Run_ContextHandling(t *testing.T) {
+	t.Run(`Given a cancelled context
+		When Run is called
+		Then context.Canceled error should be returned
+	`, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
+			select {
+			case <-runCtx.Done():
+				return runCtx.Err()
+			default:
+				return nil
+			}
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run(`Given a context
+		When Run is called and context is cancelled during execution
+		Then context.Canceled error should be returned
+	`, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
+			cancel()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return nil
+			}
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run(`Given a context with timeout
+		When Run is called and execution exceeds timeout
+		Then context.DeadlineExceeded error should be returned
+	`, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
+			select {
+			case <-runCtx.Done():
+				return runCtx.Err()
+			case <-time.After(100 * time.Millisecond):
+				return nil
+			}
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+
+	t.Run(`Given a context with values
+		When Run is called
+		Then context should be propagated to factory
+		And to runFunc
+	`, func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), testContextKey, "test-value")
+		var receivedCtx context.Context
+
+		factory := &mockRepositoryFactory{
+			createFunc: func(factoryCtx context.Context) Repository {
+				receivedCtx = factoryCtx
+				return &mockRepository{}
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		var runFuncCtx context.Context
+		changes, err := scope.Run(ctx, func(runCtx context.Context, repo Repository) error {
+			runFuncCtx = runCtx
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, ctx, receivedCtx)
+		require.NotNil(t, runFuncCtx)
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called with a cancelled context
+		And runFunc returns an error
+		Then Rollback should use independent context
+		And not be affected by original context cancellation
+	`, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		var rollbackCtx context.Context
+
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				rollbackFunc: func(rbCtx context.Context) error {
+					rollbackCtx = rbCtx
+					select {
+					case <-rbCtx.Done():
+						return rbCtx.Err()
+					default:
+						return nil
+					}
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+		scope.rollbackTimeout = 100 * time.Millisecond
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(ctx, func(ctx context.Context, repo Repository) error {
+			cancel()
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.NotNil(t, rollbackCtx)
+		require.NotEqual(t, ctx, rollbackCtx)
+	})
+}
+
+func TestConcurrentScope_Run_RetryOptionsMerging(t *testing.T) {
+	t.Run(`Given a ConcurrentScope with default retry options
+		When Run is called without RunOptions
+		Then default retry options should be used
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 2 {
+				return ErrTransient
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.GreaterOrEqual(t, callCount, 2)
+	})
+
+	t.Run(`Given a ConcurrentScope created with custom retry options
+		When Run is called
+		Then custom options should be used
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return ErrTransient
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.Equal(t, 2, callCount)
+	})
+
+	t.Run(`Given a ConcurrentScope with default retry options
+		When Run is called with RunOptions
+		Then RunOptions should override default options
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(10)))
+
+		customOpts := WithRetryOptions(retry.Attempts(2), retry.Delay(10*time.Millisecond))
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			return ErrTransient
+		}, customOpts)
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.Equal(t, 2, callCount)
+	})
+
+	t.Run(`Given a ConcurrentScope
+		When Run is called with multiple RunOptions
+		Then all RunOptions should be merged
+		And applied together
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(10)))
+
+		opts1 := WithRetryOptions(retry.Attempts(5))
+		opts2 := WithRetryOptions(retry.Delay(10 * time.Millisecond))
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 3 {
+				return ErrTransient
+			}
+			return nil
+		}, opts1, opts2)
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 3, callCount)
+	})
+
+	t.Run(`Given a ConcurrentScope
+		When Run is called with invalid RunOptions type
+		Then invalid options should be ignored gracefully
+		And default options should be used
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(2)))
+
+		invalidOpt := "not a retryOptions"
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 2 {
+				return ErrTransient
+			}
+			return nil
+		}, invalidOpt)
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, callCount)
+	})
+}
+
+func TestConcurrentScope_Run_ErrorPropagation(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and runFunc returns an error
+		Then the error should be propagated correctly
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		expectedErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return expectedErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, expectedErr) || errors.Unwrap(err) == expectedErr)
+		require.Contains(t, err.Error(), "run function error")
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Begin returns an error
+		Then Begin error should be propagated correctly
+	`, func(t *testing.T) {
+		beginErr := errors.New("begin error")
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				beginFunc: func(ctx context.Context) (context.Context, error) {
+					return nil, beginErr
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, beginErr) || errors.Unwrap(err) == beginErr)
+		require.Contains(t, err.Error(), "begin error")
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and Commit returns an error
+		Then Commit error should be propagated correctly
+	`, func(t *testing.T) {
+		commitErr := errors.New("commit error")
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				commitFunc: func(ctx context.Context) error {
+					return commitErr
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, commitErr) || errors.Unwrap(err) == commitErr)
+		require.Contains(t, err.Error(), "commit error")
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and runFunc returns an error
+		And Rollback also returns an error
+		Then both errors should be joined
+		And propagated together
+	`, func(t *testing.T) {
+		rollbackErr := errors.New("rollback error")
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				rollbackFunc: func(ctx context.Context) error {
+					return rollbackErr
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.True(t, errors.Is(err, rollbackErr))
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and multiple errors occur
+		Then all errors should be joined
+		And propagated together
+	`, func(t *testing.T) {
+		rollbackErr1 := errors.New("rollback error 1")
+		rollbackErr2 := errors.New("rollback error 2")
+		rollbackCallCount := 0
+		txRepo := &mockTransactionalRepository{
+			mockTransactional: mockTransactional{
+				rollbackFunc: func(ctx context.Context) error {
+					rollbackCallCount++
+					if rollbackCallCount == 1 {
+						return rollbackErr1
+					}
+					return rollbackErr2
+				},
+			},
+		}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		runErr := errors.New("run function error")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return runErr
+		})
+
+		require.Error(t, err)
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+		require.True(t, errors.Is(err, runErr))
+		require.True(t, errors.Is(err, rollbackErr1))
+	})
+}
+
+func TestConcurrentScope_Run_EdgeCases(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called with empty runOptions
+		Then operation should execute successfully
+		And default options should be used
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		executed := false
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			executed = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, executed)
+	})
+
+	t.Run(`Given a repository that implements both Repository and Transactional
+		When Run is called
+		Then transactional path should be taken
+		And Begin and Commit should be called
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+	})
+
+	t.Run(`Given a repository that implements only Repository
+		When Run is called
+		Then non-transactional path should be taken
+		And no Begin or Commit should be called
+	`, func(t *testing.T) {
+		repo := &mockRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return repo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		executed := false
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			executed = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, executed)
+	})
+
+	t.Run(`Given a factory that returns different repository instances
+		When Run is called and retries occur
+		Then new repository instance should be created on each retry
+	`, func(t *testing.T) {
+		createCount := 0
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				createCount++
+				return &mockRepository{}
+			},
+		}
+		scope := NewConcurrentScope(factory, WithRetryOptions(retry.Attempts(3), retry.Delay(10*time.Millisecond)))
+
+		callCount := 0
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			callCount++
+			if callCount < 2 {
+				return ErrTransient
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.Equal(t, 2, callCount)
+		require.Equal(t, 2, createCount)
+	})
+}
+
+func TestConcurrentScope_Run_ChangesTracking(t *testing.T) {
+	t.Run(`Given a repository
+		When Run is called and a single aggregate is saved
+		Then changes map should contain the aggregate
+		And should have one event pack with the aggregate's events
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			return repo.Save(ctx, agg)
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, ExpectChanges[*testAgg](
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+			func(t *testing.T, agg *testAgg) {
+				require.Equal(t, "test-value", agg.State().MyString)
+			},
+		))
+	})
+
+	t.Run(`Given a repository
+		When Run is called and multiple aggregates are saved
+		Then changes map should contain all aggregates
+		And each aggregate should have its events tracked
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate1, savedAggregate2 *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg1 := newTestAgg("test-id-1")
+			_, err := agg1.SingleEventCommand("value-1")
+			require.NoError(t, err)
+			savedAggregate1 = agg1
+			if saveErr := repo.Save(ctx, agg1); saveErr != nil {
+				return saveErr
+			}
+
+			agg2 := newTestAgg("test-id-2")
+			_, err = agg2.SingleEventCommand("value-2")
+			require.NoError(t, err)
+			savedAggregate2 = agg2
+			return repo.Save(ctx, agg2)
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, MergeExpectations(
+			ExpectChangesWithoutVerification(AggregatePtr(savedAggregate1), [][]Event{{Created{}, ValueUpdated{value: "value-1"}}}),
+			ExpectChangesWithoutVerification(AggregatePtr(savedAggregate2), [][]Event{{Created{}, ValueUpdated{value: "value-2"}}}),
+		))
+	})
+
+	t.Run(`Given a repository
+		When Run is called and the same aggregate is saved multiple times
+		Then changes map should contain the aggregate once
+		And should have multiple event packs for that aggregate
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			savedAggregate = agg
+
+			_, err := agg.SingleEventCommand("value-1")
+			require.NoError(t, err)
+			if saveErr := repo.Save(ctx, agg); saveErr != nil {
+				return saveErr
+			}
+
+			_, err = agg.SingleEventCommand("value-2")
+			require.NoError(t, err)
+			return repo.Save(ctx, agg)
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{
+				{Created{}, ValueUpdated{value: "value-1"}},
+				{ValueUpdated{value: "value-2"}},
+			},
+		))
+	})
+
+	t.Run(`Given a repository
+		When Run is called and no aggregates are saved
+		Then changes map should be empty
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			return nil
+		})
+
+		require.NoError(t, err)
+		verifyChanges(t, changes, ChangesExpectation{})
+	})
+
+	t.Run(`Given a repository
+		When Run is called and an aggregate is saved but then an error occurs
+		Then changes map should still contain the aggregate's events
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		expectedErr := errors.New("operation failed")
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			if err := repo.Save(ctx, agg); err != nil {
+				return err
+			}
+			return expectedErr
+		})
+
+		require.Error(t, err)
+		require.True(t, errors.Is(err, expectedErr))
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+		))
+	})
+
+	t.Run(`Given a transactional repository
+		When Run is called and aggregates are saved successfully
+		Then changes map should contain all saved aggregates
+	`, func(t *testing.T) {
+		txRepo := &mockTransactionalRepository{}
+		factory := &mockRepositoryFactory{
+			createFunc: func(ctx context.Context) Repository {
+				return txRepo
+			},
+		}
+		scope := NewConcurrentScope(factory)
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("test-id-1")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			return repo.Save(ctx, agg)
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, 1, txRepo.getBeginCount())
+		require.Equal(t, 1, txRepo.getCommitCount())
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+		))
+	})
+}
+
+func TestConcurrentScope_Run_LoadOperation(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and Load is executed through repoDecorator
+		Then Load should delegate to inner repository
+		And aggregate should be loaded successfully
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		loadedAgg := newTestAgg("load-test-id")
+		loadedAgg.version = 5
+		loadedAgg.state.MyString = "loaded-value"
+
+		loadCalled := false
+		repo := &mockRepository{
+			loadFunc: func(ctx context.Context, id ID, aggregate Restorer, options ...LoadOption) error {
+				loadCalled = true
+				require.Equal(t, ID("load-test-id"), id)
+				return aggregate.Restore(id, Version(5), DefaultSchemaVersion, func(state StatePtr) error {
+					s, ok := state.(*testAggState)
+					require.True(t, ok)
+					s.MyString = "loaded-value"
+					return nil
+				})
+			},
+		}
+		factory.createFunc = func(ctx context.Context) Repository {
+			return repo
+		}
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := &testAgg{}
+			return repo.Load(ctx, "load-test-id", agg)
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, changes)
+		require.True(t, loadCalled)
+	})
+}
+
+func TestConcurrentScope_Run_SaveError(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and Save returns an error
+		Then error should be propagated
+		And changes should be tracked before error
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		saveErr := errors.New("save failed")
+		repo := &mockRepository{
+			saveFunc: func(ctx context.Context, aggregate Storer, options ...SaveOption) error {
+				return saveErr
+			},
+		}
+		factory.createFunc = func(ctx context.Context) Repository {
+			return repo
+		}
+
+		var savedAggregate *testAgg
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("save-error-id")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			savedAggregate = agg
+			return repo.Save(ctx, agg)
+		})
+
+		require.Error(t, err)
+		require.True(t, errors.Is(err, saveErr))
+		require.NotNil(t, changes)
+		verifyChanges(t, changes, ExpectChangesWithoutVerification(
+			AggregatePtr(savedAggregate),
+			[][]Event{{Created{}, ValueUpdated{value: "test-value"}}},
+		))
+	})
+}
+
+func TestConcurrentScope_Run_StoreError(t *testing.T) {
+	t.Run(`Given a ConcurrentScope
+		When Run is called and Store returns an error
+		Then error should be propagated
+		And changes should not be tracked
+	`, func(t *testing.T) {
+		factory := &mockRepositoryFactory{}
+		scope := NewConcurrentScope(factory)
+
+		storeErr := errors.New("store failed")
+		repo := &mockRepository{
+			saveFunc: func(ctx context.Context, aggregate Storer, options ...SaveOption) error {
+				return aggregate.Store(func(id ID, aggPtr AggregatePtr, state StatePtr, events EventPack, version Version, schemaVersion SchemaVersion) error {
+					return storeErr
+				})
+			},
+		}
+		factory.createFunc = func(ctx context.Context) Repository {
+			return repo
+		}
+
+		changes, err := scope.Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			agg := newTestAgg("store-error-id")
+			_, err := agg.SingleEventCommand("test-value")
+			require.NoError(t, err)
+			return repo.Save(ctx, agg)
+		})
+
+		require.Error(t, err)
+		require.True(t, errors.Is(err, storeErr))
+		require.NotNil(t, changes)
+		require.Empty(t, changes)
+	})
+}

@@ -1,0 +1,18 @@
+version: "2"
+linters:
+  enable-all: true
+  settings:
+    exhaustruct:
+      allow-empty-returns: false
+      allow-empty-declarations: false
+    staticcheck:
+      checks:
+        - all
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      disable-default-exclusions: true
+      exclude-functions:
+        - fmt.Println
+    govet:
+      enable-all: true

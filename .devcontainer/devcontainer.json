@@ -1,0 +1,55 @@
+{
+	"name": "Go DDD Kit",
+	"image": "golangci/golangci-lint:v2.7.2",
+	"workspaceFolder": "/workspace",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+	"runArgs": [
+		"--memory=16g",
+		"--cpus=2.0",
+		"--shm-size=2g",
+		"--network=host"
+	],
+	"mounts": [
+		// Docker socket mount - allows container to access host Docker (Colima)
+		"source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+	],
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// "postCreateCommand": "chmod +x .devcontainer/setup-user.sh && LOCAL_UID=${localEnv:UID} LOCAL_GID=${localEnv:GID} LOCAL_USER=${localEnv:USER} LOCAL_HOME=${localEnv:HOME} .devcontainer/setup-user.sh",
+	// Environment variables for testcontainers and Go cache
+	"containerEnv": {
+		"TESTCONTAINERS_RYUK_DISABLED": "true",
+		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
+		"DOCKER_HOST": "unix:///var/run/docker.sock",
+		"GOCACHE": "${localEnv:HOME}/.cache/go-build",
+		"GOMODCACHE": "${localEnv:HOME}/go/pkg/mod"
+	},
+	// Configure tool-specific properties.
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"ms-vscode.vscode-json"
+			],
+			"settings": {
+				"terminal.integrated.shellIntegration.enabled": false,
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"go.useLanguageServer": true,
+				// "go.gopath": "/go",
+				"go.toolsManagement.checkForUpdates": "local",
+				"go.testTimeout": "120s",
+				"go.lintTool": "golangci-lint",
+				"go.lintOnSave": "package",
+				"go.formatTool": "goimports",
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.organizeImports": "explicit"
+				}
+			}
+		}
+	}
+	// Use the same user as host to avoid permission issues
+	// More info: https://aka.ms/vscode-remote/containers/non-root.
+	// "remoteUser": "root"
+}
