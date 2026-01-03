@@ -6,6 +6,9 @@ import (
 	"strings"
 
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
+	mongopkg "github.com/aqaliarept/go-ddd-kit/pkg/mongo"
+	postgrespkg "github.com/aqaliarept/go-ddd-kit/pkg/postgres"
+	redispkg "github.com/aqaliarept/go-ddd-kit/pkg/redis"
 )
 
 // StateV1 represents version 1 of the test state for schema migration testing
@@ -116,6 +119,15 @@ type StateTestAggV1 struct {
 	core.Aggregate[StateV1]
 }
 
+// StorageOptions returns the storage options for this aggregate
+func (s *StateTestAggV1) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{
+		mongopkg.WithCollectionName("test_agg"),
+		postgrespkg.WithTableName("test_agg"),
+		redispkg.WithNamespace("test_agg"),
+	}
+}
+
 func NewStateTestAggV1(id core.ID) *StateTestAggV1 {
 	agg := &StateTestAggV1{}
 	agg.Initialize(id, Created{})
@@ -125,6 +137,15 @@ func NewStateTestAggV1(id core.ID) *StateTestAggV1 {
 // StateTestAggV2 is a test aggregate using StateV2 schema version
 type StateTestAggV2 struct {
 	core.Aggregate[StateV2]
+}
+
+// StorageOptions returns the storage options for this aggregate
+func (s *StateTestAggV2) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{
+		mongopkg.WithCollectionName("test_agg"),
+		postgrespkg.WithTableName("test_agg"),
+		redispkg.WithNamespace("test_agg"),
+	}
 }
 
 func NewStateTestAggV2(id core.ID) *StateTestAggV2 {

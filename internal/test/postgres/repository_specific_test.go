@@ -6,19 +6,24 @@ import (
 
 	testpkg "github.com/aqaliarept/go-ddd-kit/internal/test"
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
+	postgrespkg "github.com/aqaliarept/go-ddd-kit/pkg/postgres"
 	"github.com/stretchr/testify/require"
 )
 
-func newPostgresTestAgg(id core.ID) *postgresTestAgg {
-	baseAgg := testpkg.NewTestAgg(id)
-	wrapper := testpkg.NewTestAggWrapper(baseAgg)
-	return &postgresTestAgg{TestAggWrapper: *wrapper}
+func newPostgresTestAgg(id core.ID) *testpkg.TestAgg {
+	return testpkg.NewTestAgg(id)
 }
 
-func newPostgresTestAggForLoad() *postgresTestAgg {
-	baseAgg := testpkg.NewTestAgg("")
-	wrapper := testpkg.NewTestAggWrapper(baseAgg)
-	return &postgresTestAgg{TestAggWrapper: *wrapper}
+func newPostgresTestAggForLoad() *testpkg.TestAgg {
+	return &testpkg.TestAgg{}
+}
+
+type noTableNameAgg struct {
+	testpkg.TestAgg
+}
+
+func (n *noTableNameAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{}
 }
 
 type invalidState struct {
@@ -28,16 +33,25 @@ type invalidState struct {
 func (s *invalidState) Apply(event core.Event) {
 }
 
+type invalidPostgresAgg struct {
+	core.Aggregate[invalidState]
+}
+
+func (i *invalidPostgresAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{postgrespkg.WithTableName("test_agg")}
+}
+
 func TestPostgresRepositorySpecific(t *testing.T) {
 	container := SetupPostgresTestContainer(t)
 	ctx := context.Background()
+	factory := postgrespkg.NewRepositoryFactory(container.Database())
 
 	t.Run(`Scenario: Begin transaction with existing transaction panics
   Given a repository with an active transaction
   When an attempt is made to begin another transaction
   Then the operation should panic`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -58,7 +72,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Begin is called with a cancelled context
   Then the operation should return an error`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -74,7 +88,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Begin is called with a cancelled context
   Then the operation should return an error`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -90,7 +104,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Commit is called
   Then the operation should return ErrTransactionNotFound`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -104,7 +118,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Rollback is called
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -117,7 +131,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Load is called with a cancelled context
   Then the operation should return a retrieval error`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		errorCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -136,7 +150,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When the transaction is rolled back
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -154,7 +168,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		err = repo.Load(txCtx, "tx-load-id", loadedAgg)
 		require.NoError(t, err)
 
-		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "tx-load-value", state.String)
 
 		err = tx.Rollback(txCtx)
@@ -167,7 +181,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   Then the aggregate should be loaded successfully
   And the aggregate state should match the saved state`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("non-tx-load-id")
 		_, err := agg.SingleEventCommand("non-tx-load-value")
 		require.NoError(t, err)
@@ -179,7 +193,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		err = repo.Load(ctx, "non-tx-load-id", loadedAgg)
 		require.NoError(t, err)
 
-		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "non-tx-load-value", state.String)
 	})
 
@@ -188,19 +202,12 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Save is called
   Then the operation should return a state encoding error`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
-		type invalidAgg struct {
-			core.Aggregate[invalidState]
-		}
+		repo := factory.Create(ctx)
 
-		agg := &invalidAgg{}
+		agg := &invalidPostgresAgg{}
 		agg.Initialize("encoding-error-id", testpkg.Created{})
 
-		wrapper := &postgresTestAgg{
-			TestAggWrapper: *testpkg.NewTestAggWrapper(agg),
-		}
-
-		err := repo.Save(ctx, wrapper)
+		err := repo.Save(ctx, agg)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "state encoding failed")
 	})
@@ -216,7 +223,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When an attempt is made to load the aggregate
   Then the load operation should fail with ErrAggregateNotFound`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -257,7 +264,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When an attempt is made to load the aggregate
   Then the load operation should fail with ErrAggregateNotFound`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("non-tx-removal-id")
 		_, err := agg.SingleEventCommand("non-tx-removal-value")
 		require.NoError(t, err)
@@ -289,7 +296,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When the aggregate is loaded
   Then the aggregate state should match the saved state`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -310,7 +317,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		err = repo.Load(ctx, "tx-insert-id", loadedAgg)
 		require.NoError(t, err)
 
-		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "tx-insert-value", state.String)
 	})
 
@@ -321,7 +328,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When the aggregate is loaded
   Then the aggregate state should match the saved state`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("non-tx-insert-id")
 		_, err := agg.SingleEventCommand("non-tx-insert-value")
 		require.NoError(t, err)
@@ -333,7 +340,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		err = repo.Load(ctx, "non-tx-insert-id", loadedAgg)
 		require.NoError(t, err)
 
-		state := testpkg.GetState[testpkg.TestAggState](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "non-tx-insert-value", state.String)
 	})
 
@@ -348,7 +355,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When the aggregate is loaded
   Then the aggregate state should reflect the update`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -379,7 +386,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		err = repo.Load(ctx, "tx-update-id", finalAgg)
 		require.NoError(t, err)
 
-		state := testpkg.GetState[testpkg.TestAggState](finalAgg)
+		state := finalAgg.State()
 		require.Equal(t, "updated-value", state.String)
 	})
 
@@ -392,7 +399,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When the aggregate is loaded again
   Then the aggregate state should reflect the update`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("non-tx-update-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
@@ -414,7 +421,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		err = repo.Load(ctx, "non-tx-update-id", finalAgg)
 		require.NoError(t, err)
 
-		state := testpkg.GetState[testpkg.TestAggState](finalAgg)
+		state := finalAgg.State()
 		require.Equal(t, "updated-value", state.String)
 	})
 
@@ -424,7 +431,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   Then the operation should panic`, func(t *testing.T) {
 		t.Parallel()
 		require.Panics(t, func() {
-			WithTableName("")
+			postgrespkg.WithTableName("")
 		})
 	})
 
@@ -433,19 +440,17 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When Load is called with an aggregate that has no table name
   Then the operation should panic`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
-		type noTableNameAgg struct {
-			testpkg.TestAggWrapper
-		}
+		repo := factory.Create(ctx)
 
+		baseAgg := testpkg.NewTestAgg("no-table-name-id")
 		agg := &noTableNameAgg{
-			TestAggWrapper: *testpkg.NewTestAggWrapper(testpkg.NewTestAgg("no-table-name-id")),
+			TestAgg: *baseAgg,
 		}
 
 		require.Panics(t, func() {
 			err := repo.Load(ctx, "no-table-name-id", agg)
 			require.NoError(t, err)
-		})
+		}, "Load should panic when aggregate has no table name in StorageOptions")
 	})
 
 	t.Run(`Scenario: Load aggregate version check within transaction
@@ -456,7 +461,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   When the transaction is committed
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -488,7 +493,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   And the transaction is committed
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -523,7 +528,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   And the aggregate is saved
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("non-tx-remove-version-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
@@ -551,7 +556,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   And the transaction is committed
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		tx, ok := repo.(core.Transactional)
 		require.True(t, ok)
 
@@ -586,7 +591,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   And the aggregate is saved
   Then the operation should succeed`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("non-tx-update-version-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
@@ -613,7 +618,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   Then the removal save operation should fail
   And the error should be ErrConcurrentModification`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("remove-concurrent-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
@@ -651,7 +656,7 @@ func TestPostgresRepositorySpecific(t *testing.T) {
   Then the save operation should fail
   And the error should be ErrConcurrentModification`, func(t *testing.T) {
 		t.Parallel()
-		repo := newRepository(container.Database())
+		repo := factory.Create(ctx)
 		agg := newPostgresTestAgg("update-concurrent-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
@@ -681,3 +686,4 @@ func TestPostgresRepositorySpecific(t *testing.T) {
 		require.ErrorIs(t, err, core.ErrConcurrentModification)
 	})
 }
+

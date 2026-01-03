@@ -7,8 +7,7 @@ test:
 	go test work -race
 
 test-coverage:
-	go test work -race -coverprofile=coverage.out -covermode=atomic
-	go tool cover -html=coverage.out -o coverage.html
+	@tools/test-coverage.sh
 
 lint:
 	tools/lint.sh

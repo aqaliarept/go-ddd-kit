@@ -15,8 +15,6 @@ type TestRunner interface {
 	SetupRepository(t *testing.T) core.Repository
 	// SetupContext returns the context to use for repository operations
 	SetupContext(t *testing.T) context.Context
-	// NewAggregate creates a new test aggregate instance
-	NewAggregate(aggregateType any) TestAggregate
 }
 
 // ConcurrentTestRunner defines the interface for running concurrent scope tests
@@ -45,8 +43,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the loaded aggregate should have the correct version
   And the loaded aggregate state should match the saved state`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("test-id-1")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-1")
 		pack, err := agg.SingleEventCommand("test-value")
 		require.NoError(t, err)
 		require.Len(t, pack, 1)
@@ -56,17 +53,16 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 		require.Equal(t, core.Version(1), agg.Version())
 		require.Empty(t, agg.Events())
-		state := GetState[TestAggState](agg)
+		state := agg.State()
 		require.Equal(t, "test-value", state.String)
 
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-1", loadedAgg)
 		require.NoError(t, err)
 
 		require.Equal(t, core.ID("test-id-1"), loadedAgg.ID())
 		require.Equal(t, core.Version(1), loadedAgg.Version())
-		loadedState := GetState[TestAggState](loadedAgg)
+		loadedState := loadedAgg.State()
 		require.Equal(t, "test-value", loadedState.String)
 		require.Empty(t, loadedAgg.Events())
 		require.NoError(t, loadedAgg.Error())
@@ -82,8 +78,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   When the aggregate is loaded from the repository
   Then the loaded aggregate state should match the final state`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("test-id-2")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-2")
 		pack1, err := agg.SingleEventCommand("first-value")
 		require.NoError(t, err)
 		require.Len(t, pack1, 1)
@@ -97,17 +92,16 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 
 		require.Equal(t, core.Version(1), agg.Version())
 		require.Empty(t, agg.Events())
-		state := GetState[TestAggState](agg)
+		state := agg.State()
 		require.Equal(t, "second-value", state.String)
 
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-2", loadedAgg)
 		require.NoError(t, err)
 
 		require.Equal(t, core.ID("test-id-2"), loadedAgg.ID())
 		require.Equal(t, core.Version(1), loadedAgg.Version())
-		loadedState := GetState[TestAggState](loadedAgg)
+		loadedState := loadedAgg.State()
 		require.Equal(t, "second-value", loadedState.String)
 	})
 
@@ -120,20 +114,18 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the entity slice should be initialized
   And the map structure should be preserved if present`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("test-id-3")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-3")
 		_, err := agg.SingleEventCommand("complex-value")
 		require.NoError(t, err)
 
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-3", loadedAgg)
 		require.NoError(t, err)
 
-		state := GetState[TestAggState](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "complex-value", state.String)
 		require.NotNil(t, state.EntitySlice)
 		if state.Map != nil {
@@ -148,16 +140,14 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrAggregateExists`, func(t *testing.T) {
 		t.Parallel()
 		// Create and save first aggregate
-		baseAgg1 := NewTestAgg("test-id-duplicate")
-		agg1 := runner.NewAggregate(baseAgg1)
+		agg1 := NewTestAgg("test-id-duplicate")
 		_, err := agg1.SingleEventCommand("first-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg1)
 		require.NoError(t, err)
 
 		// Try to save another aggregate with the same ID
-		baseAgg2 := NewTestAgg("test-id-duplicate")
-		agg2 := runner.NewAggregate(baseAgg2)
+		agg2 := NewTestAgg("test-id-duplicate")
 		_, err = agg2.SingleEventCommand("second-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg2)
@@ -170,8 +160,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   Then the load operation should fail
   And the error should be ErrAggregateNotFound`, func(t *testing.T) {
 		t.Parallel()
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err := repo.Load(ctx, "non-existent-id", loadedAgg)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -185,15 +174,13 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   When the aggregate is loaded from the repository
   Then the loaded aggregate should have the correct version`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("test-id-4")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-4")
 		err := repo.Save(ctx, agg)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(1), agg.Version())
 
 		// Verify it was saved
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-4", loadedAgg)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(1), loadedAgg.Version())
@@ -209,8 +196,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the loaded aggregate state should reflect the latest event`, func(t *testing.T) {
 		t.Parallel()
 		// Create and save initial aggregate
-		baseAgg := NewTestAgg("test-id-5")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-5")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 
@@ -227,12 +213,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.Equal(t, core.Version(2), agg.Version())
 
 		// Load and verify the updated aggregate
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-5", loadedAgg)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(2), loadedAgg.Version())
-		loadedState := GetState[TestAggState](loadedAgg)
+		loadedState := loadedAgg.State()
 		require.Equal(t, "updated-value", loadedState.String)
 	})
 
@@ -246,20 +231,18 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrAggregateNotFound
   And the document should not have been created`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("test-id-6")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-6")
 		pack, err := agg.Remove()
 		require.NoError(t, err)
 		require.Len(t, pack, 1)
-		state := GetState[TestAggState](agg)
+		state := agg.State()
 		require.True(t, state.Removed)
 
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
 		// Verify document was not created
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-6", loadedAgg)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -275,8 +258,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrAggregateNotFound
   And the document should have been deleted`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("test-id-7")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("test-id-7")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
@@ -286,15 +268,14 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		pack, err := agg.Remove()
 		require.NoError(t, err)
 		require.Len(t, pack, 1)
-		state := GetState[TestAggState](agg)
+		state := agg.State()
 		require.True(t, state.Removed)
 
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
 		// Verify document was deleted
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "test-id-7", loadedAgg)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -309,8 +290,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrConcurrentModification`, func(t *testing.T) {
 		t.Parallel()
 		// Create and save an aggregate
-		baseAgg := NewTestAgg("concurrency-test-id")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("concurrency-test-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 
@@ -319,8 +299,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.Equal(t, core.Version(1), agg.Version())
 
 		// Create a second instance of the same aggregate (simulating concurrent access)
-		baseAgg2 := &TestAgg{}
-		agg2 := runner.NewAggregate(baseAgg2)
+		agg2 := &TestAgg{}
 		err = repo.Load(ctx, "concurrency-test-id", agg2)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(1), agg2.Version())
@@ -349,8 +328,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrConcurrentModification`, func(t *testing.T) {
 		t.Parallel()
 		// Create and save an aggregate
-		baseAgg := NewTestAgg("successful-concurrency-test-id")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("successful-concurrency-test-id")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 
@@ -359,8 +337,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.Equal(t, core.Version(1), agg.Version())
 
 		// Create a second instance and modify it
-		baseAgg2 := &TestAgg{}
-		agg2 := runner.NewAggregate(baseAgg2)
+		agg2 := &TestAgg{}
 		err = repo.Load(ctx, "successful-concurrency-test-id", agg2)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(1), agg2.Version())
@@ -391,20 +368,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   Then the aggregate should exist with the modified state
   And the aggregate should not be removed`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("concurrent-modify-remove-1")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("concurrent-modify-remove-1")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		baseModifyAgg := &TestAgg{}
-		modifyAgg := runner.NewAggregate(baseModifyAgg)
+		modifyAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-modify-remove-1", modifyAgg)
 		require.NoError(t, err)
 
-		baseRemoveAgg := &TestAgg{}
-		removeAgg := runner.NewAggregate(baseRemoveAgg)
+		removeAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-modify-remove-1", removeAgg)
 		require.NoError(t, err)
 
@@ -419,11 +393,10 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrConcurrentModification)
 
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-modify-remove-1", loadedAgg)
 		require.NoError(t, err)
-		state := GetState[TestAggState](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "modified-value", state.String)
 		require.False(t, state.Removed)
 	})
@@ -440,20 +413,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrAggregateNotFound
   And the aggregate should have been deleted`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("concurrent-modify-remove-2")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("concurrent-modify-remove-2")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		baseRemoveAgg := &TestAgg{}
-		removeAgg := runner.NewAggregate(baseRemoveAgg)
+		removeAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-modify-remove-2", removeAgg)
 		require.NoError(t, err)
 
-		baseModifyAgg := &TestAgg{}
-		modifyAgg := runner.NewAggregate(baseModifyAgg)
+		modifyAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-modify-remove-2", modifyAgg)
 		require.NoError(t, err)
 
@@ -468,8 +438,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
 
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-modify-remove-2", loadedAgg)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -487,20 +456,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
   And the error should be ErrAggregateNotFound
   And the aggregate should have been deleted by the first removal`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewTestAgg("concurrent-remove-remove-1")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("concurrent-remove-remove-1")
 		_, err := agg.SingleEventCommand("initial-value")
 		require.NoError(t, err)
 		err = repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		baseFirstRemoveAgg := &TestAgg{}
-		firstRemoveAgg := runner.NewAggregate(baseFirstRemoveAgg)
+		firstRemoveAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-remove-remove-1", firstRemoveAgg)
 		require.NoError(t, err)
 
-		baseSecondRemoveAgg := &TestAgg{}
-		secondRemoveAgg := runner.NewAggregate(baseSecondRemoveAgg)
+		secondRemoveAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-remove-remove-1", secondRemoveAgg)
 		require.NoError(t, err)
 
@@ -518,8 +484,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
 
 		// Verify the first removal was successful
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "concurrent-remove-remove-1", loadedAgg)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -532,19 +497,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the loaded aggregate should have correct V1 state
 	  And the aggregate version should be correct`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewStateTestAggV1("migration-v1-1")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewStateTestAggV1("migration-v1-1")
 		err := repo.Save(ctx, agg)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(1), agg.Version())
 
-		baseLoadedAgg := &StateTestAggV1{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-v1-1", loadedAgg)
 		require.NoError(t, err)
 		require.Equal(t, core.ID("migration-v1-1"), loadedAgg.ID())
 		require.Equal(t, core.Version(1), loadedAgg.Version())
-		state := GetState[StateV1](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "version 1", state.ValueV1)
 	})
 
@@ -554,26 +517,23 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  And the aggregate is loaded from the repository
 	  Then the aggregate state should persist correctly`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewStateTestAggV1("migration-v1-2")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewStateTestAggV1("migration-v1-2")
 		err := repo.Save(ctx, agg)
 		require.NoError(t, err)
 
-		baseLoadedAgg := &StateTestAggV1{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-v1-2", loadedAgg)
 		require.NoError(t, err)
-		state := GetState[StateV1](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "version 1", state.ValueV1)
 
 		err = repo.Save(ctx, loadedAgg)
 		require.NoError(t, err)
 
-		baseLoadedAgg2 := &StateTestAggV1{}
-		loadedAgg2 := runner.NewAggregate(baseLoadedAgg2)
+		loadedAgg2 := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-v1-2", loadedAgg2)
 		require.NoError(t, err)
-		state2 := GetState[StateV1](loadedAgg2)
+		state2 := loadedAgg2.State()
 		require.Equal(t, "version 1", state2.ValueV1)
 		require.Equal(t, core.Version(1), loadedAgg2.Version())
 	})
@@ -585,19 +545,17 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the loaded aggregate should have correct V2 state
 	  And the aggregate version should be correct`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewStateTestAggV2("migration-v2-1")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewStateTestAggV2("migration-v2-1")
 		err := repo.Save(ctx, agg)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(1), agg.Version())
 
-		baseLoadedAgg := &StateTestAggV2{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-v2-1", loadedAgg)
 		require.NoError(t, err)
 		require.Equal(t, core.ID("migration-v2-1"), loadedAgg.ID())
 		require.Equal(t, core.Version(1), loadedAgg.Version())
-		state := GetState[StateV2](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "version 2", state.ValueV2)
 	})
 
@@ -609,8 +567,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the loaded aggregate should have the updated value
 	  And the aggregate version should be incremented`, func(t *testing.T) {
 		t.Parallel()
-		baseAgg := NewStateTestAggV2("migration-v2-2")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewStateTestAggV2("migration-v2-2")
 		err := repo.Save(ctx, agg)
 		require.NoError(t, err)
 
@@ -620,12 +577,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.NoError(t, err)
 		require.Equal(t, core.Version(2), agg.Version())
 
-		baseLoadedAgg := &StateTestAggV2{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-v2-2", loadedAgg)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(2), loadedAgg.Version())
-		state := GetState[StateV2](loadedAgg)
+		state := loadedAgg.State()
 		require.Equal(t, "updated-value", state.ValueV2)
 	})
 
@@ -635,18 +591,16 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the V2 aggregate should have migrated state from V1
 	  And the migration should succeed`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV1 := NewStateTestAggV1("migration-forward-1")
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := NewStateTestAggV1("migration-forward-1")
 		err := repo.Save(ctx, aggV1)
 		require.NoError(t, err)
 
-		baseAggV2 := &StateTestAggV2{}
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-forward-1", aggV2)
 		require.NoError(t, err)
 		require.Equal(t, core.ID("migration-forward-1"), aggV2.ID())
 		require.Equal(t, core.Version(1), aggV2.Version())
-		state := GetState[StateV2](aggV2)
+		state := aggV2.State()
 		require.Equal(t, "version 1", state.ValueV2)
 	})
 
@@ -658,16 +612,14 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the updated value should be persisted
 	  And the aggregate version should be incremented`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV1 := NewStateTestAggV1("migration-forward-2")
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := NewStateTestAggV1("migration-forward-2")
 		err := repo.Save(ctx, aggV1)
 		require.NoError(t, err)
 
-		baseAggV2 := &StateTestAggV2{}
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-forward-2", aggV2)
 		require.NoError(t, err)
-		state := GetState[StateV2](aggV2)
+		state := aggV2.State()
 		require.Equal(t, "version 1", state.ValueV2)
 
 		_, err = aggV2.SingleEventCommand("migrated-and-updated")
@@ -676,12 +628,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		require.NoError(t, err)
 		require.Equal(t, core.Version(2), aggV2.Version())
 
-		baseLoadedAggV2 := &StateTestAggV2{}
-		loadedAggV2 := runner.NewAggregate(baseLoadedAggV2)
+		loadedAggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-forward-2", loadedAggV2)
 		require.NoError(t, err)
 		require.Equal(t, core.Version(2), loadedAggV2.Version())
-		state2 := GetState[StateV2](loadedAggV2)
+		state2 := loadedAggV2.State()
 		require.Equal(t, "migrated-and-updated", state2.ValueV2)
 	})
 
@@ -692,13 +643,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the state should be persisted with schema version 2
 	  And the value should be correct`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV1 := NewStateTestAggV1("migration-forward-3")
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := NewStateTestAggV1("migration-forward-3")
 		err := repo.Save(ctx, aggV1)
 		require.NoError(t, err)
 
-		baseAggV2 := &StateTestAggV2{}
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-forward-3", aggV2)
 		require.NoError(t, err)
 
@@ -707,11 +656,10 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		err = repo.Save(ctx, aggV2)
 		require.NoError(t, err)
 
-		baseLoadedAggV2 := &StateTestAggV2{}
-		loadedAggV2 := runner.NewAggregate(baseLoadedAggV2)
+		loadedAggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-forward-3", loadedAggV2)
 		require.NoError(t, err)
-		state := GetState[StateV2](loadedAggV2)
+		state := loadedAggV2.State()
 		require.Equal(t, "final-value", state.ValueV2)
 		require.Equal(t, core.Version(2), loadedAggV2.Version())
 	})
@@ -722,13 +670,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the load operation should fail
 	  And the error should indicate unsupported schema version`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV2 := NewStateTestAggV2("migration-backward-1")
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := NewStateTestAggV2("migration-backward-1")
 		err := repo.Save(ctx, aggV2)
 		require.NoError(t, err)
 
-		baseAggV1 := &StateTestAggV1{}
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-backward-1", aggV1)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported schema version")
@@ -740,8 +686,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the load operation should fail
 	  And the error should indicate unsupported schema version`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV2 := NewStateTestAggV2("migration-backward-2")
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := NewStateTestAggV2("migration-backward-2")
 		err := repo.Save(ctx, aggV2)
 		require.NoError(t, err)
 
@@ -750,8 +695,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		err = repo.Save(ctx, aggV2)
 		require.NoError(t, err)
 
-		baseAggV1 := &StateTestAggV1{}
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-backward-2", aggV1)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported schema version")
@@ -764,23 +708,20 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then V1 should still be able to load the aggregate
 	  And the state should be correct`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV1 := NewStateTestAggV1("migration-mixed-1")
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := NewStateTestAggV1("migration-mixed-1")
 		err := repo.Save(ctx, aggV1)
 		require.NoError(t, err)
 
-		baseAggV2 := &StateTestAggV2{}
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-mixed-1", aggV2)
 		require.NoError(t, err)
-		state := GetState[StateV2](aggV2)
+		state := aggV2.State()
 		require.Equal(t, "version 1", state.ValueV2)
 
-		baseAggV1Loaded := &StateTestAggV1{}
-		aggV1Loaded := runner.NewAggregate(baseAggV1Loaded)
+		aggV1Loaded := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-mixed-1", aggV1Loaded)
 		require.NoError(t, err)
-		stateV1 := GetState[StateV1](aggV1Loaded)
+		stateV1 := aggV1Loaded.State()
 		require.Equal(t, "version 1", stateV1.ValueV1)
 		require.Equal(t, core.Version(1), aggV1Loaded.Version())
 	})
@@ -792,13 +733,11 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 	  Then the load operation should fail
 	  And the error should indicate unsupported schema version`, func(t *testing.T) {
 		t.Parallel()
-		baseAggV1 := NewStateTestAggV1("migration-mixed-2")
-		aggV1 := runner.NewAggregate(baseAggV1)
+		aggV1 := NewStateTestAggV1("migration-mixed-2")
 		err := repo.Save(ctx, aggV1)
 		require.NoError(t, err)
 
-		baseAggV2 := &StateTestAggV2{}
-		aggV2 := runner.NewAggregate(baseAggV2)
+		aggV2 := &StateTestAggV2{}
 		err = repo.Load(ctx, "migration-mixed-2", aggV2)
 		require.NoError(t, err)
 
@@ -807,8 +746,7 @@ func RunBaseTests(t *testing.T, runner TestRunner) {
 		err = repo.Save(ctx, aggV2)
 		require.NoError(t, err)
 
-		baseAggV1Loaded := &StateTestAggV1{}
-		aggV1Loaded := runner.NewAggregate(baseAggV1Loaded)
+		aggV1Loaded := &StateTestAggV1{}
 		err = repo.Load(ctx, "migration-mixed-2", aggV1Loaded)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported schema version")
@@ -831,30 +769,27 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   And the aggregate state should match the saved state`, func(t *testing.T) {
 		t.Parallel()
 		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
-			baseAgg := NewTestAgg("tx-scope-success-id")
-			agg := runner.NewAggregate(baseAgg)
+			agg := NewTestAgg("tx-scope-success-id")
 			_, err := agg.SingleEventCommand("tx-scope-success-value")
 			require.NoError(t, err)
 
 			err = repo.Save(ctx, agg)
 			require.NoError(t, err)
 
-			baseLoadedAgg := &TestAgg{}
-			loadedAgg := runner.NewAggregate(baseLoadedAgg)
+			loadedAgg := &TestAgg{}
 			err = repo.Load(ctx, "tx-scope-success-id", loadedAgg)
 			require.NoError(t, err)
-			require.Equal(t, "tx-scope-success-value", GetState[TestAggState](loadedAgg).String)
+			require.Equal(t, "tx-scope-success-value", loadedAgg.State().String)
 
 			return nil
 		})
 		require.NoError(t, err)
 
 		repo := factory.Create(ctx)
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "tx-scope-success-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "tx-scope-success-value", GetState[TestAggState](loadedAgg).String)
+		require.Equal(t, "tx-scope-success-value", loadedAgg.State().String)
 	})
 
 	t.Run(`Scenario: Save aggregate within concurrent scope - rollback on error
@@ -870,19 +805,17 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   And the aggregate should not have been persisted`, func(t *testing.T) {
 		t.Parallel()
 		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
-			baseAgg := NewTestAgg("tx-scope-rollback-id")
-			agg := runner.NewAggregate(baseAgg)
+			agg := NewTestAgg("tx-scope-rollback-id")
 			_, err := agg.SingleEventCommand("tx-scope-rollback-value")
 			require.NoError(t, err)
 
 			err = repo.Save(ctx, agg)
 			require.NoError(t, err)
 
-			baseLoadedAgg := &TestAgg{}
-			loadedAgg := runner.NewAggregate(baseLoadedAgg)
+			loadedAgg := &TestAgg{}
 			err = repo.Load(ctx, "tx-scope-rollback-id", loadedAgg)
 			require.NoError(t, err)
-			require.Equal(t, "tx-scope-rollback-value", GetState[TestAggState](loadedAgg).String)
+			require.Equal(t, "tx-scope-rollback-value", loadedAgg.State().String)
 
 			return fmt.Errorf("intentional rollback error")
 		})
@@ -890,8 +823,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 		require.Contains(t, err.Error(), "intentional rollback error")
 
 		repo := factory.Create(ctx)
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "tx-scope-rollback-id", loadedAgg)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -908,8 +840,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 		t.Parallel()
 		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
 			for i := 0; i < 3; i++ {
-				baseAgg := NewTestAgg(core.ID(fmt.Sprintf("tx-scope-multi-id-%d", i)))
-				agg := runner.NewAggregate(baseAgg)
+				agg := NewTestAgg(core.ID(fmt.Sprintf("tx-scope-multi-id-%d", i)))
 				_, err := agg.SingleEventCommand(fmt.Sprintf("tx-scope-multi-value-%d", i))
 				require.NoError(t, err)
 
@@ -918,11 +849,10 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 			}
 
 			for i := 0; i < 3; i++ {
-				baseLoadedAgg := &TestAgg{}
-				loadedAgg := runner.NewAggregate(baseLoadedAgg)
+				loadedAgg := &TestAgg{}
 				err := repo.Load(ctx, core.ID(fmt.Sprintf("tx-scope-multi-id-%d", i)), loadedAgg)
 				require.NoError(t, err)
-				require.Equal(t, fmt.Sprintf("tx-scope-multi-value-%d", i), GetState[TestAggState](loadedAgg).String)
+				require.Equal(t, fmt.Sprintf("tx-scope-multi-value-%d", i), loadedAgg.State().String)
 			}
 
 			return nil
@@ -931,11 +861,10 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 
 		repo := factory.Create(ctx)
 		for i := 0; i < 3; i++ {
-			baseLoadedAgg := &TestAgg{}
-			loadedAgg := runner.NewAggregate(baseLoadedAgg)
+			loadedAgg := &TestAgg{}
 			err := repo.Load(ctx, core.ID(fmt.Sprintf("tx-scope-multi-id-%d", i)), loadedAgg)
 			require.NoError(t, err)
-			require.Equal(t, fmt.Sprintf("tx-scope-multi-value-%d", i), GetState[TestAggState](loadedAgg).String)
+			require.Equal(t, fmt.Sprintf("tx-scope-multi-value-%d", i), loadedAgg.State().String)
 		}
 	})
 
@@ -952,8 +881,7 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   Then the original aggregate should be unchanged`, func(t *testing.T) {
 		t.Parallel()
 		repo := factory.Create(ctx)
-		baseAgg := NewTestAgg("tx-scope-readonly-id")
-		agg := runner.NewAggregate(baseAgg)
+		agg := NewTestAgg("tx-scope-readonly-id")
 		_, err := agg.SingleEventCommand("readonly-value")
 		require.NoError(t, err)
 
@@ -961,14 +889,12 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 		require.NoError(t, err)
 
 		_, err = concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
-			baseLoadedAgg := &TestAgg{}
-			loadedAgg := runner.NewAggregate(baseLoadedAgg)
+			loadedAgg := &TestAgg{}
 			err = repo.Load(ctx, "tx-scope-readonly-id", loadedAgg)
 			require.NoError(t, err)
-			require.Equal(t, "readonly-value", GetState[TestAggState](loadedAgg).String)
+			require.Equal(t, "readonly-value", loadedAgg.State().String)
 
-			baseNonExistentAgg := &TestAgg{}
-			nonExistentAgg := runner.NewAggregate(baseNonExistentAgg)
+			nonExistentAgg := &TestAgg{}
 			err = repo.Load(ctx, "non-existent-id", nonExistentAgg)
 			require.Error(t, err)
 			require.ErrorIs(t, err, core.ErrAggregateNotFound)
@@ -977,11 +903,10 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 		})
 		require.NoError(t, err)
 
-		baseLoadedAgg := &TestAgg{}
-		loadedAgg := runner.NewAggregate(baseLoadedAgg)
+		loadedAgg := &TestAgg{}
 		err = repo.Load(ctx, "tx-scope-readonly-id", loadedAgg)
 		require.NoError(t, err)
-		require.Equal(t, "readonly-value", GetState[TestAggState](loadedAgg).String)
+		require.Equal(t, "readonly-value", loadedAgg.State().String)
 	})
 
 	t.Run(`Scenario: Concurrent scope with error handling and cleanup
@@ -996,24 +921,21 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
   And no aggregates should have been persisted`, func(t *testing.T) {
 		t.Parallel()
 		_, err := concurrentScope.Run(ctx, func(ctx context.Context, repo core.Repository) error {
-			baseAgg1 := NewTestAgg("tx-scope-cleanup-1")
-			agg1 := runner.NewAggregate(baseAgg1)
+			agg1 := NewTestAgg("tx-scope-cleanup-1")
 			_, err := agg1.SingleEventCommand("value-1")
 			require.NoError(t, err)
 
 			err = repo.Save(ctx, agg1)
 			require.NoError(t, err)
 
-			baseAgg2 := NewTestAgg("tx-scope-cleanup-2")
-			agg2 := runner.NewAggregate(baseAgg2)
+			agg2 := NewTestAgg("tx-scope-cleanup-2")
 			_, err = agg2.SingleEventCommand("value-2")
 			require.NoError(t, err)
 
 			err = repo.Save(ctx, agg2)
 			require.NoError(t, err)
 
-			baseAgg3 := NewTestAgg("tx-scope-cleanup-3")
-			agg3 := runner.NewAggregate(baseAgg3)
+			agg3 := NewTestAgg("tx-scope-cleanup-3")
 			_, err = agg3.SingleEventCommand("value-3")
 			require.NoError(t, err)
 
@@ -1023,20 +945,17 @@ func RunBaseConcurrentTests(t *testing.T, runner ConcurrentTestRunner) {
 		require.Contains(t, err.Error(), "simulated failure during third aggregate save")
 
 		repo := factory.Create(ctx)
-		baseLoadedAgg1 := &TestAgg{}
-		loadedAgg1 := runner.NewAggregate(baseLoadedAgg1)
+		loadedAgg1 := &TestAgg{}
 		err = repo.Load(ctx, "tx-scope-cleanup-1", loadedAgg1)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
 
-		baseLoadedAgg2 := &TestAgg{}
-		loadedAgg2 := runner.NewAggregate(baseLoadedAgg2)
+		loadedAgg2 := &TestAgg{}
 		err = repo.Load(ctx, "tx-scope-cleanup-2", loadedAgg2)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
 
-		baseLoadedAgg3 := &TestAgg{}
-		loadedAgg3 := runner.NewAggregate(baseLoadedAgg3)
+		loadedAgg3 := &TestAgg{}
 		err = repo.Load(ctx, "tx-scope-cleanup-3", loadedAgg3)
 		require.Error(t, err)
 		require.ErrorIs(t, err, core.ErrAggregateNotFound)
