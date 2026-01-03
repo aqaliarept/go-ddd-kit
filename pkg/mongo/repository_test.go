@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	testpkg "github.com/aqaliarept/go-ddd-kit/internal/test"
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
-	testpkg "github.com/aqaliarept/go-ddd-kit/pkg/internal/test"
 	"github.com/avast/retry-go/v4"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"

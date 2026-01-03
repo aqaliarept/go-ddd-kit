@@ -6,7 +6,7 @@ require (
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/google/uuid v1.6.0
 	github.com/aqaliarept/go-ddd-kit/pkg/core v0.0.0
-	github.com/aqaliarept/go-ddd-kit/pkg/internal/test v0.0.0
+	github.com/aqaliarept/go-ddd-kit/internal/test v0.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.40.0
@@ -15,7 +15,7 @@ require (
 
 replace github.com/aqaliarept/go-ddd-kit/pkg/core => ../core
 
-replace github.com/aqaliarept/go-ddd-kit/pkg/internal/test => ../../internal/test
+replace github.com/aqaliarept/go-ddd-kit/internal/test => ../../internal/test
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

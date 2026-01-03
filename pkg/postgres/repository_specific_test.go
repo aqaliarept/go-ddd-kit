@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	testpkg "github.com/aqaliarept/go-ddd-kit/internal/test"
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
-	testpkg "github.com/aqaliarept/go-ddd-kit/pkg/internal/test"
 	"github.com/stretchr/testify/require"
 )
 
