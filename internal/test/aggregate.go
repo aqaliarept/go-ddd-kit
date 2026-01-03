@@ -3,6 +3,9 @@ package test
 
 import (
 	core "github.com/aqaliarept/go-ddd-kit/pkg/core"
+	mongopkg "github.com/aqaliarept/go-ddd-kit/pkg/mongo"
+	postgrespkg "github.com/aqaliarept/go-ddd-kit/pkg/postgres"
+	redispkg "github.com/aqaliarept/go-ddd-kit/pkg/redis"
 )
 
 // NestedEntity represents a nested entity in test state
@@ -45,6 +48,15 @@ type ValueUpdated struct {
 // TestAgg is the base test aggregate that can be embedded by repository-specific implementations
 type TestAgg struct {
 	core.Aggregate[TestAggState]
+}
+
+// StorageOptions returns the storage options for this aggregate
+func (t *TestAgg) StorageOptions() []core.StorageOption {
+	return []core.StorageOption{
+		mongopkg.WithCollectionName("test_agg"),
+		postgrespkg.WithTableName("test_agg"),
+		redispkg.WithNamespace("test_agg"),
+	}
 }
 
 // SingleEventCommand executes a command that generates a single event
