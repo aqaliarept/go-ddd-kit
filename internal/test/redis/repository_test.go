@@ -28,10 +28,10 @@ func (r *redisTestContainer) Client() *redis.Client {
 func (r *redisTestContainer) Cleanup() {
 	ctx := context.Background()
 	if r.client != nil {
-		_ = r.client.Close()
+		_ = r.client.Close() //nolint:errcheck
 	}
 	if r.container != nil {
-		_ = r.container.Terminate(ctx)
+		_ = r.container.Terminate(ctx) //nolint:errcheck
 	}
 }
 

@@ -44,8 +44,8 @@ func (s *StateV1) Restore(schemaVersion core.SchemaVersion, restoreFunc func(sta
 	return nil
 }
 
-func (t *StateTestAggV1) SingleEventCommand(val string) (core.EventPack, error) {
-	return t.ProcessCommand(func(s *StateV1, er core.EventRiser) error {
+func (s *StateTestAggV1) SingleEventCommand(val string) (core.EventPack, error) {
+	return s.ProcessCommand(func(state *StateV1, er core.EventRiser) error {
 		er.Raise(ValueUpdated{Value: val})
 		return nil
 	})
@@ -76,8 +76,8 @@ func (s *StateV2) Apply(event core.Event) {
 	}
 }
 
-func (t *StateTestAggV2) SingleEventCommand(val string) (core.EventPack, error) {
-	return t.ProcessCommand(func(s *StateV2, er core.EventRiser) error {
+func (s *StateTestAggV2) SingleEventCommand(val string) (core.EventPack, error) {
+	return s.ProcessCommand(func(state *StateV2, er core.EventRiser) error {
 		er.Raise(ValueUpdated{Value: val})
 		return nil
 	})

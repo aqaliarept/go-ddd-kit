@@ -45,10 +45,10 @@ func (m *mongoTestContainer) Client() *mongo.Client {
 func (m *mongoTestContainer) Cleanup() {
 	ctx := context.Background()
 	if m.client != nil {
-		_ = m.client.Disconnect(ctx)
+		_ = m.client.Disconnect(ctx) //nolint:errcheck
 	}
 	if m.container != nil {
-		_ = m.container.Terminate(ctx)
+		_ = m.container.Terminate(ctx) //nolint:errcheck
 	}
 }
 
