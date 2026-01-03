@@ -3,6 +3,7 @@ module github.com/aqaliarept/go-ddd-kit/pkg/redis
 go 1.25.5
 
 require (
+	github.com/aqaliarept/go-ddd-kit/internal/test v0.0.0-00010101000000-000000000000
 	github.com/aqaliarept/go-ddd-kit/pkg/core v0.0.0
 	github.com/redis/go-redis/v9 v9.17.0
 	github.com/stretchr/testify v1.11.1
@@ -11,6 +12,8 @@ require (
 )
 
 replace github.com/aqaliarept/go-ddd-kit/pkg/core => ../core
+
+replace github.com/aqaliarept/go-ddd-kit/internal/test => ../../internal/test
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

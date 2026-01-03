@@ -1,4 +1,4 @@
-module github.com/aqaliarept/go-ddd-kit/pkg/internal/test
+module github.com/aqaliarept/go-ddd-kit/internal/test
 
 go 1.25.5
 
